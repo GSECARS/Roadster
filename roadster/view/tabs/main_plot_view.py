@@ -1,15 +1,15 @@
-import os
-import pyqtgraph as pg
-import numpy as np
 import datetime
-from qtpy import QtWidgets, QtCore, QtGui
-from typing import Optional, List
+import os
+from typing import List, Optional
+
+import numpy as np
+import pyqtgraph as pg
 from epics import caget
 from lmfit import Model, lineshapes
+from qtpy import QtCore, QtGui, QtWidgets
 
-from roadster.view.drawing import VLine
 from roadster.model import MapModel, OverlayModel, icon_path
-
+from roadster.view.drawing import VLine
 
 pg.setConfigOption("antialias", True)
 pg.setConfigOption("useOpenGL", False)
@@ -972,10 +972,14 @@ class BasePlotWidget(QtWidgets.QWidget, QtCore.QObject):
         
         # Set minimum height if no rows, otherwise set to calculated height
         if self.overlay_table.rowCount() == 0:
-            self.overlay_table.setMaximumHeight(header_height + 5)
+            min_height = header_height + 5
+            self.overlay_table.setMinimumHeight(min_height)
+            self.overlay_table.setMaximumHeight(min_height)
         else:
             # Cap at a reasonable maximum (e.g., 200px) to prevent taking too much space
-            self.overlay_table.setMaximumHeight(min(total_height, 200))
+            capped_height = min(total_height, 200)
+            self.overlay_table.setMinimumHeight(capped_height)
+            self.overlay_table.setMaximumHeight(capped_height)
     
     def _update_all_offset_steps(self, step_value: float) -> None:
         """Updates the step size for all offset spinboxes in the table."""
@@ -1122,6 +1126,9 @@ class BasePlotWidget(QtWidgets.QWidget, QtCore.QObject):
         
         # Clear the table
         self.overlay_table.setRowCount(0)
+    
+        # Resize table to retract
+        self._resize_table_to_content()
         
         # Clear the main plot as well
         self.reset_plot()
