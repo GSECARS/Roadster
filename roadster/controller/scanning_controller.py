@@ -114,6 +114,9 @@ class ScanningController(QObject):
         self.scanning_view.plot.btn_previous_file.clicked.connect(self.load_previous_file)
         self.scanning_view.plot.btn_next_file.clicked.connect(self.load_next_file)
         self.scan_running.connect(self.scanning_view.plot.toggle_plot_buttons)
+        
+        # Connect loaded file signal to update plot name for overlays
+        self.loaded_file_changed.connect(self.scanning_view.plot.update_plot_name)
 
     def _connect_scanning_control_widgets(self):
         """Connects the signals of the scanning control widgets."""
@@ -506,7 +509,7 @@ class ScanningController(QObject):
             self.scanning_view.lbl_centering_correction.text().split()[0].strip()
         )
 
-        value = focal_correction + caget(self.station.stages.sample_focus.value[1])
+        value = caget(self.station.stages.sample_focus.value[1]) - focal_correction
         high_limit = caget(self.station.stages.sample_focus.value[1] + ".HLM")
         low_limit = caget(self.station.stages.sample_focus.value[1] + ".LLM")
 

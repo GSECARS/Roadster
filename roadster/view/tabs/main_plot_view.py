@@ -8,7 +8,7 @@ from epics import caget
 from lmfit import Model, lineshapes
 
 from roadster.view.drawing import VLine
-from roadster.model import MapModel, icon_path
+from roadster.model import MapModel, OverlayModel, icon_path
 
 
 pg.setConfigOption("antialias", True)
@@ -36,6 +36,7 @@ class BasePlotWidget(QtWidgets.QWidget, QtCore.QObject):
 
         # Motors
         self.target_position_motor = []
+        self._current_plot_name = "Current Plot"  # Track the name for saving as overlay
 
         # Data arrays
         self._x_list = []
@@ -72,6 +73,17 @@ class BasePlotWidget(QtWidgets.QWidget, QtCore.QObject):
         self.btn_load_file = QtWidgets.QPushButton()
         self.btn_previous_file = QtWidgets.QPushButton()
         self.btn_next_file = QtWidgets.QPushButton()
+        
+        # Overlay management widgets
+        self.overlay_table = QtWidgets.QTableWidget()
+        self.btn_add_overlay = QtWidgets.QPushButton("Add")
+        self.btn_save_current = QtWidgets.QPushButton("Add as overlay")
+        self.btn_clear_overlays = QtWidgets.QPushButton("Clear")
+        self.lbl_offset_step = QtWidgets.QLabel("Offset step:")
+        self.spin_offset_step = QtWidgets.QDoubleSpinBox()
+        self.lbl_scale_step = QtWidgets.QLabel("Scale step:")
+        self.spin_scale_step = QtWidgets.QDoubleSpinBox()
+        self.overlays: List[OverlayModel] = []
 
         # Status variables
         self.derivative_mode = False
@@ -87,6 +99,7 @@ class BasePlotWidget(QtWidgets.QWidget, QtCore.QObject):
         self._configure_plot_area()
         self._configure_infinite_lines()
         self._configure_labels()
+        self._configure_overlay_table()
         self._connect_local_widgets()
         self._set_object_names()
         self._configure_buttons()
@@ -239,6 +252,9 @@ class BasePlotWidget(QtWidgets.QWidget, QtCore.QObject):
 
             self.target_position_motor.append(motor_name.capitalize())
             self.target_position_motor.append(pv_name)
+            
+            # Generate preview name for unsaved scan (same format as save_to_file)
+            self._current_plot_name = pv_name.replace(":", ".")
 
         # QtWidgets.QApplication.ProcessEvents()
 
@@ -302,6 +318,9 @@ class BasePlotWidget(QtWidgets.QWidget, QtCore.QObject):
             c = (a + b) // 2  # interval midpoint
             a, b = (c, b) if os.path.exists(full_dir % c) else (a, c)
 
+        # Store the filename for overlay naming
+        self._current_plot_name = os.path.basename(full_dir % b).replace(".csv", "")
+        
         # Create file or open existing
         with open(full_dir % b, "w") as collection_file:
 
@@ -505,6 +524,7 @@ class BasePlotWidget(QtWidgets.QWidget, QtCore.QObject):
         Clears the data arrays of the plot and
         restores all status variables to default.
         Resets the axis titles to generic titles.
+        Note: Overlays are preserved during reset.
         """
         # Clear data arrays and updates the plot.
         # self._x_list.clear()
@@ -519,6 +539,9 @@ class BasePlotWidget(QtWidgets.QWidget, QtCore.QObject):
         # Reset status variables
         self.derivative_mode = False
         self.inverted_mode = False
+        
+        # Ensure overlays remain visible after reset
+        self._restore_overlays()
 
     def mouse_moved(self, event) -> None:
         """
@@ -709,6 +732,13 @@ class BasePlotWidget(QtWidgets.QWidget, QtCore.QObject):
             self.target_position_motor.append(item)
         self.target_position_motor = stage
         self._plot_widget.setLabel(axis="bottom", text=f"{stage[0]} ({stage[1]})")
+    
+    def update_plot_name(self, filepath: str) -> None:
+        """Updates the current plot name from a loaded file path."""
+        if filepath:
+            self._current_plot_name = os.path.basename(filepath).replace(".csv", "")
+        else:
+            self._current_plot_name = "Current Plot"
 
     def update_colors(self) -> None:
         # TODO: Add settings with previously saved colors.
@@ -752,6 +782,376 @@ class BasePlotWidget(QtWidgets.QWidget, QtCore.QObject):
     def gaussian(a, b, x):
         return a * np.exp(-((x / (2 * b)) ** 2))
 
+    def _configure_overlay_table(self) -> None:
+        """Configures the overlay management table."""
+        self.overlay_table.setColumnCount(6)
+        self.overlay_table.setHorizontalHeaderLabels(["Filename", "Color", "Offset", "Scale", "Visible", "Remove"])
+        self.overlay_table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
+        
+        # Set size policy to expand based on content
+        self.overlay_table.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Minimum)
+        self.overlay_table.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
+        
+        # Hide vertical header (row numbers)
+        self.overlay_table.verticalHeader().setVisible(False)
+        
+        # Set initial minimal height (just the header)
+        self.overlay_table.setMaximumHeight(self.overlay_table.horizontalHeader().height() + 5)
+        
+        # Set column widths
+        header = self.overlay_table.horizontalHeader()
+        header.setStretchLastSection(False)
+        header.setSectionResizeMode(0, QtWidgets.QHeaderView.Stretch)
+        self.overlay_table.setColumnWidth(1, 60)   # Color
+        self.overlay_table.setColumnWidth(2, 100)  # Offset
+        self.overlay_table.setColumnWidth(3, 100)  # Scale
+        self.overlay_table.setColumnWidth(4, 60)   # Visible
+        self.overlay_table.setColumnWidth(5, 70)   # Remove
+        
+        # Configure add overlay button
+        self.btn_add_overlay.setObjectName("btn-main")
+        self.btn_add_overlay.clicked.connect(self.add_overlay)
+        
+        # Configure save current button
+        self.btn_save_current.setObjectName("btn-main")
+        self.btn_save_current.clicked.connect(self.save_current_as_overlay)
+        
+        # Configure clear all button
+        self.btn_clear_overlays.setObjectName("btn-main")
+        self.btn_clear_overlays.clicked.connect(self.clear_all_overlays)
+        
+        # Configure offset step control
+        self.spin_offset_step.setRange(0.0001, 100)
+        self.spin_offset_step.setValue(0.01)
+        self.spin_offset_step.setDecimals(4)
+        self.spin_offset_step.setSingleStep(0.01)
+        self.spin_offset_step.setFixedWidth(80)
+        self.spin_offset_step.valueChanged.connect(self._update_all_offset_steps)
+        
+        # Configure scale step control
+        self.spin_scale_step.setRange(0.001, 100)
+        self.spin_scale_step.setValue(0.1)
+        self.spin_scale_step.setDecimals(3)
+        self.spin_scale_step.setSingleStep(0.1)
+        self.spin_scale_step.setFixedWidth(80)
+        self.spin_scale_step.valueChanged.connect(self._update_all_scale_steps)
+    
+    def add_overlay(self) -> None:
+        """Opens file dialog to add a new overlay."""
+        dialog = QtWidgets.QFileDialog()
+        dialog.setFileMode(QtWidgets.QFileDialog.ExistingFile)
+        
+        filename = dialog.getOpenFileName(
+            dialog, "Open Overlay File", "", "CSV Files (*.csv)"
+        )
+        
+        if filename[0]:
+            self._load_overlay_from_file(filename[0])
+    
+    def save_current_as_overlay(self) -> None:
+        """Saves the current plot data as an overlay."""
+        # Check if there's data to save
+        if not self._x_list or not self._y_list:
+            print("No current plot data to save as overlay")
+            return
+        
+        # Generate a random color for the overlay
+        import random
+        color = (random.randint(50, 255), random.randint(50, 255), random.randint(50, 255))
+        
+        # Create overlay model from current plot data using the tracked name
+        overlay = OverlayModel(
+            filename=self._current_plot_name,
+            x_data=self._x_list.copy(),
+            y_data=self._y_list.copy(),
+            color=color,
+            offset=0.0,
+            visible=True
+        )
+        
+        # Plot the overlay
+        pen = pg.mkPen(color=color, width=2)
+        overlay.plot_item = self._plot_widget.plot(
+            overlay.x_data,
+            overlay.get_transformed_y_data(),
+            pen=pen,
+            symbol='o',
+            symbolSize=4,
+            symbolBrush=color,
+            name=overlay.filename
+        )
+        
+        self.overlays.append(overlay)
+        self._add_overlay_to_table(overlay)
+    
+    def _load_overlay_from_file(self, filepath: str) -> None:
+        """Loads overlay data from a CSV file."""
+        try:
+            # Use numpy to load the data (same way as load_from_file does it)
+            x_data = []
+            y_data = []
+            
+            try:
+                # Try loading with 3 columns (positions, raw, corrected)
+                x, y_raw, y_corrected = np.loadtxt(
+                    fname=filepath,
+                    dtype=float,
+                    comments="#",
+                    delimiter=",",
+                    unpack=True,
+                )
+                x_data = x.tolist()
+                y_data = y_corrected.tolist()
+            except:
+                # Try loading with 2 columns (positions, counts)
+                try:
+                    x, y = np.loadtxt(
+                        fname=filepath,
+                        dtype=float,
+                        comments="#",
+                        delimiter=",",
+                        unpack=True,
+                    )
+                    x_data = x.tolist()
+                    y_data = y.tolist()
+                except Exception as load_error:
+                    print(f"Failed to parse CSV data: {load_error}")
+                    return
+            
+            if x_data and y_data:
+                # Generate a random color for the overlay
+                import random
+                color = (random.randint(50, 255), random.randint(50, 255), random.randint(50, 255))
+                
+                # Create overlay model
+                overlay = OverlayModel(
+                    filename=os.path.basename(filepath),
+                    x_data=x_data,
+                    y_data=y_data,
+                    color=color,
+                    offset=0.0,
+                    visible=True
+                )
+                
+                print(f"Creating overlay plot with color {color}")
+                print(f"X range: {min(x_data):.4f} to {max(x_data):.4f}")
+                print(f"Y range: {min(y_data):.4f} to {max(y_data):.4f}")
+                
+                # Plot the overlay with symbols like the reference line
+                pen = pg.mkPen(color=color, width=2)
+                overlay.plot_item = self._plot_widget.plot(
+                    overlay.x_data,
+                    overlay.get_transformed_y_data(),
+                    pen=pen,
+                    symbol='o',
+                    symbolSize=4,
+                    symbolBrush=color,
+                    name=overlay.filename
+                )
+                
+                print(f"Overlay plot item created: {overlay.plot_item}")
+                print(f"Plot item is in widget items: {overlay.plot_item in self._plot_widget.items}")
+                
+                self.overlays.append(overlay)
+                self._add_overlay_to_table(overlay)
+                print(f"Overlay added successfully. Total overlays: {len(self.overlays)}")
+            else:
+                print("No data loaded from file")
+                
+        except Exception as e:
+            print(f"Error loading overlay: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    def _resize_table_to_content(self) -> None:
+        """Resizes the table to fit its content."""
+        # Calculate height needed: header + all rows + some padding
+        header_height = self.overlay_table.horizontalHeader().height()
+        row_height = self.overlay_table.rowHeight(0) if self.overlay_table.rowCount() > 0 else 30
+        total_height = header_height + (row_height * self.overlay_table.rowCount()) + 2  # +2 for border
+        
+        # Set minimum height if no rows, otherwise set to calculated height
+        if self.overlay_table.rowCount() == 0:
+            self.overlay_table.setMaximumHeight(header_height + 5)
+        else:
+            # Cap at a reasonable maximum (e.g., 200px) to prevent taking too much space
+            self.overlay_table.setMaximumHeight(min(total_height, 200))
+    
+    def _update_all_offset_steps(self, step_value: float) -> None:
+        """Updates the step size for all offset spinboxes in the table."""
+        for row in range(self.overlay_table.rowCount()):
+            offset_spin = self.overlay_table.cellWidget(row, 2)
+            if offset_spin:
+                offset_spin.setSingleStep(step_value)
+    
+    def _update_all_scale_steps(self, step_value: float) -> None:
+        """Updates the step size for all scale spinboxes in the table."""
+        for row in range(self.overlay_table.rowCount()):
+            scale_spin = self.overlay_table.cellWidget(row, 3)
+            if scale_spin:
+                scale_spin.setSingleStep(step_value)
+    
+    def _add_overlay_to_table(self, overlay: OverlayModel) -> None:
+        """Adds an overlay to the table widget."""
+        row = self.overlay_table.rowCount()
+        self.overlay_table.insertRow(row)
+        
+        # Filename
+        filename_item = QtWidgets.QTableWidgetItem(overlay.filename)
+        filename_item.setFlags(filename_item.flags() & ~QtCore.Qt.ItemIsEditable)
+        self.overlay_table.setItem(row, 0, filename_item)
+        
+        # Color button (base styling in style.qss, only set dynamic color here)
+        color_btn = QtWidgets.QPushButton()
+        color_btn.setStyleSheet(f"background-color: rgb{overlay.color};")
+        color_btn.clicked.connect(lambda checked, r=row: self._change_overlay_color(r))
+        self.overlay_table.setCellWidget(row, 1, color_btn)
+        
+        # Offset spinbox
+        offset_spin = QtWidgets.QDoubleSpinBox()
+        offset_spin.setRange(-1000000, 1000000)
+        offset_spin.setValue(overlay.offset)
+        offset_spin.setSingleStep(self.spin_offset_step.value())
+        offset_spin.setDecimals(3)
+        offset_spin.valueChanged.connect(lambda value, r=row: self._change_overlay_offset(r, value))
+        self.overlay_table.setCellWidget(row, 2, offset_spin)
+        
+        # Scale spinbox
+        scale_spin = QtWidgets.QDoubleSpinBox()
+        scale_spin.setRange(0.001, 1000)
+        scale_spin.setValue(overlay.scale)
+        scale_spin.setSingleStep(self.spin_scale_step.value())
+        scale_spin.setDecimals(3)
+        scale_spin.valueChanged.connect(lambda value, r=row: self._change_overlay_scale(r, value))
+        self.overlay_table.setCellWidget(row, 3, scale_spin)
+        
+        # Visible checkbox
+        visible_check = QtWidgets.QCheckBox()
+        visible_check.setChecked(overlay.visible)
+        visible_check.stateChanged.connect(lambda state, r=row: self._toggle_overlay_visibility(r, state))
+        checkbox_widget = QtWidgets.QWidget()
+        checkbox_layout = QtWidgets.QHBoxLayout(checkbox_widget)
+        checkbox_layout.addWidget(visible_check)
+        checkbox_layout.setAlignment(QtCore.Qt.AlignCenter)
+        checkbox_layout.setContentsMargins(0, 0, 0, 0)
+        self.overlay_table.setCellWidget(row, 4, checkbox_widget)
+        
+        # Remove button
+        remove_btn = QtWidgets.QPushButton("Remove")
+        remove_btn.clicked.connect(lambda checked, r=row: self._remove_overlay(r))
+        self.overlay_table.setCellWidget(row, 5, remove_btn)
+        
+        # Resize table to fit content
+        self._resize_table_to_content()
+    
+    def _change_overlay_color(self, row: int) -> None:
+        """Opens color dialog to change overlay color."""
+        if row < len(self.overlays):
+            overlay = self.overlays[row]
+            current_color = QtGui.QColor(*overlay.color)
+            color = QtWidgets.QColorDialog.getColor(current_color, self, "Select Overlay Color")
+            
+            if color.isValid():
+                overlay.color = (color.red(), color.green(), color.blue())
+                
+                # Update button color (base styling in style.qss)
+                color_btn = self.overlay_table.cellWidget(row, 1)
+                color_btn.setStyleSheet(f"background-color: rgb{overlay.color};")
+                
+                # Update plot color
+                if overlay.plot_item:
+                    pen = pg.mkPen(color=overlay.color, width=2)
+                    overlay.plot_item.setPen(pen)
+    
+    def _change_overlay_offset(self, row: int, value: float) -> None:
+        """Change the offset of an overlay."""
+        if 0 <= row < len(self.overlays):
+            overlay = self.overlays[row]
+            overlay.offset = value
+            
+            # Update plot data (even if hidden, so it's correct when shown)
+            if overlay.plot_item:
+                overlay.plot_item.setData(overlay.x_data, overlay.get_transformed_y_data())
+    
+    def _change_overlay_scale(self, row: int, value: float) -> None:
+        """Change the scale of an overlay."""
+        if 0 <= row < len(self.overlays):
+            overlay = self.overlays[row]
+            overlay.scale = value
+            
+            # Update plot data (even if hidden, so it's correct when shown)
+            if overlay.plot_item:
+                overlay.plot_item.setData(overlay.x_data, overlay.get_transformed_y_data())
+    
+    def _toggle_overlay_visibility(self, row: int, state: int) -> None:
+        """Toggles visibility of an overlay."""
+        if row < len(self.overlays):
+            overlay = self.overlays[row]
+            overlay.visible = (state == QtCore.Qt.Checked)
+            
+            if overlay.plot_item:
+                overlay.plot_item.setVisible(overlay.visible)
+    
+    def _remove_overlay(self, row: int) -> None:
+        """Removes an overlay from the plot and table."""
+        if row < len(self.overlays):
+            overlay = self.overlays[row]
+            
+            # Remove from plot
+            if overlay.plot_item and overlay.plot_item in self._plot_widget.items:
+                self._plot_widget.removeItem(overlay.plot_item)
+            
+            # Remove from list
+            self.overlays.pop(row)
+            
+            # Rebuild table
+            self._rebuild_overlay_table()
+            
+            # Resize table
+            self._resize_table_to_content()
+    
+    def clear_all_overlays(self) -> None:
+        """Removes all overlays and the main plot from the graph."""
+        # Remove all overlay plot items
+        for overlay in self.overlays:
+            if overlay.plot_item and overlay.plot_item in self._plot_widget.items:
+                self._plot_widget.removeItem(overlay.plot_item)
+        
+        # Clear the overlays list
+        self.overlays.clear()
+        
+        # Clear the table
+        self.overlay_table.setRowCount(0)
+        
+        # Clear the main plot as well
+        self.reset_plot()
+    
+    def _rebuild_overlay_table(self) -> None:
+        """Rebuilds the overlay table from scratch."""
+        self.overlay_table.setRowCount(0)
+        for overlay in self.overlays:
+            self._add_overlay_to_table(overlay)
+    
+    def _restore_overlays(self) -> None:
+        """Ensures all overlays are visible on the plot after reset."""
+        for overlay in self.overlays:
+            if overlay.plot_item:
+                # Check if plot item is in the widget
+                if overlay.plot_item not in self._plot_widget.items:
+                    # Re-add the plot item
+                    pen = pg.mkPen(color=overlay.color, width=2)
+                    overlay.plot_item = self._plot_widget.plot(
+                        overlay.x_data,
+                        overlay.get_transformed_y_data(),
+                        pen=pen,
+                        symbol='o',
+                        symbolSize=4,
+                        symbolBrush=overlay.color,
+                        name=overlay.filename
+                    )
+                # Ensure visibility matches the model state
+                overlay.plot_item.setVisible(overlay.visible)
+    
     def _connect_local_widgets(self) -> None:
         """Connects signals for the locally used widgets."""
         self._plot_widget.scene().sigMouseClicked.connect(self.mouse_clicked)
@@ -799,10 +1199,32 @@ class BasePlotWidget(QtWidgets.QWidget, QtCore.QObject):
         toolbar_layout = QtWidgets.QVBoxLayout()
         toolbar_layout.addLayout(status_layout)
         toolbar_layout.addLayout(tools_layout)
+        
+        # Overlay section layout
+        overlay_section_layout = QtWidgets.QVBoxLayout()
+        overlay_section_layout.setContentsMargins(0, 10, 0, 0)
+        
+        overlay_header_layout = QtWidgets.QHBoxLayout()
+        overlay_header_layout.setSpacing(5)
+        overlay_label = QtWidgets.QLabel("Overlays")
+        overlay_label.setStyleSheet("font-weight: bold; font-size: 11px;")
+        overlay_header_layout.addWidget(overlay_label)
+        overlay_header_layout.addStretch(1)
+        overlay_header_layout.addWidget(self.lbl_offset_step)
+        overlay_header_layout.addWidget(self.spin_offset_step)
+        overlay_header_layout.addWidget(self.lbl_scale_step)
+        overlay_header_layout.addWidget(self.spin_scale_step)
+        overlay_header_layout.addWidget(self.btn_clear_overlays)
+        overlay_header_layout.addWidget(self.btn_save_current)
+        overlay_header_layout.addWidget(self.btn_add_overlay)
+        
+        overlay_section_layout.addLayout(overlay_header_layout)
+        overlay_section_layout.addWidget(self.overlay_table)
 
         # Main plot layout.
         layout = QtWidgets.QVBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self._graphics_layout, alignment=QtCore.Qt.Alignment())
         layout.addLayout(toolbar_layout)
+        layout.addLayout(overlay_section_layout)
         self.setLayout(layout)

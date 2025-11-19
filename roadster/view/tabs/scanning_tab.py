@@ -471,9 +471,9 @@ class ScanningTab(QtWidgets.QWidget):
         layout_status.addWidget(self.check_test_mode, alignment=QtCore.Qt.AlignRight)
 
         # Main layout.
-        self.main_scanning_layout.addLayout(layout_setup_scan)
-        self.main_scanning_layout.addWidget(HLine())
         self.main_scanning_layout.addLayout(layout_step_scan_buttons)
+        self.main_scanning_layout.addWidget(HLine())
+        self.main_scanning_layout.addLayout(layout_setup_scan)
         self.main_scanning_layout.addWidget(HLine())
         self.main_scanning_layout.addLayout(layout_fly_scan_buttons)
         self.main_scanning_layout.addWidget(HLine())
