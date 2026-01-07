@@ -25,7 +25,6 @@ class BasePlotWidget(QtWidgets.QWidget, QtCore.QObject):
 
         # Basic graphics layout widget configuration.
         self._graphics_layout = pg.GraphicsLayoutWidget()
-        self._view = self._graphics_layout.addViewBox(row=0, col=0)
         self._plot_widget = self._graphics_layout.addPlot(row=0, col=0)
 
         # Lines
@@ -162,7 +161,7 @@ class BasePlotWidget(QtWidgets.QWidget, QtCore.QObject):
 
         # Disable default context menu
         self._plot_widget.setMenuEnabled(False)
-        self._view.setMenuEnabled(False)
+        self._plot_widget.getViewBox().setMenuEnabled(False)
 
         # Set plot area background color
         self._graphics_layout.setBackground("#2B2B2B")

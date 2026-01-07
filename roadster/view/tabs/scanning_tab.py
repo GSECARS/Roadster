@@ -144,7 +144,10 @@ class ScanningTab(QtWidgets.QWidget):
     def _config_line_edit(self) -> None:
         """Configuration of the scanning tab line edit widgets."""
         # Set the font and size of the text.
-        font = QtGui.QFont("Consolas", 9)
+        # Use Qt's font system to find an available monospace font
+        font = QtGui.QFont()
+        font.setStyleHint(QtGui.QFont.Monospace)
+        font.setPointSize(9)
         self.lne_range.setFont(font)
         self.lne_step.setFont(font)
         self.lne_exposure.setFont(font)

@@ -543,70 +543,143 @@ class ScanningController(QObject):
             self.scanning_view.lbl_centering_correction.setText("Applied")
 
     @staticmethod
-    def _get_file(directory: str, oldest: Optional[bool] = False) -> str:
-        files = os.listdir(directory)
-        full_paths = []
+    def _get_file(directory: str, oldest: Optional[bool] = False) -> Optional[str]:
+        if not os.path.exists(directory) or not os.path.isdir(directory):
+            return None
+        
+        try:
+            files = os.listdir(directory)
+            if not files:
+                return None
+                
+            full_paths = []
+            [full_paths.append(os.path.join(directory, file)) for file in files if os.path.isfile(os.path.join(directory, file))]
 
-        [full_paths.append(os.path.join(directory, file)) for file in files]
+            if not full_paths:
+                return None
 
-        if oldest:
-            target_file = min(full_paths, key=os.path.getctime)
-        else:
-            target_file = max(full_paths, key=os.path.getctime)
+            if oldest:
+                target_file = min(full_paths, key=os.path.getctime)
+            else:
+                target_file = max(full_paths, key=os.path.getctime)
 
-        return target_file
+            return str(target_file)
+        except (OSError, PermissionError) as e:
+            return None
 
-    def _get_relative_file(self, directory: str, next_file: Optional[bool] = False) -> str:
-        relative_file: str = ""
+    def _get_relative_file(self, directory: str, next_file: Optional[bool] = False) -> Optional[str]:
+        if not os.path.exists(directory) or not os.path.isdir(directory):
+            return None
+            
+        relative_file: Optional[str] = None
+        
         # Account for nothing loaded
-        if not self._loaded_file:
-            self._loaded_file = self._get_file(directory=directory)
+        if not self._loaded_file or not os.path.exists(self._loaded_file):
+            target_file = self._get_file(directory=directory)
+            if target_file:
+                self._loaded_file = target_file
+            else:
+                return None
+        
+        if not os.path.exists(self._loaded_file):
+            return None
+            
         loaded_file_creation_time = os.path.getctime(self._loaded_file)
 
-        files = []
+        try:
+            files = []
+            
+            if next_file:
+                latest_file = self._get_file(directory=directory)
+                if latest_file and latest_file == self._loaded_file:
+                    relative_file = self._loaded_file
+                else:
+                    for file in os.listdir(directory):
+                        filepath = os.path.join(directory, file)
+                        if not os.path.isfile(filepath):
+                            continue
+                        file_creation_time = os.path.getctime(filepath)
 
-        if next_file:
-            if self._get_file(directory=directory) == self._loaded_file:
-                relative_file = self._loaded_file
+                        if relative_file is None:
+                            relative_file = filepath
+
+                        if loaded_file_creation_time < file_creation_time:
+                            files.append(filepath)
+
+                    if files:
+                        relative_file = min(files, key=os.path.getctime)
+                    else:
+                        relative_file = self._loaded_file
             else:
-                for file in os.listdir(directory):
-                    filepath = os.path.join(directory, file)
-                    file_creation_time = os.path.getctime(filepath)
+                oldest_file = self._get_file(directory=directory, oldest=True)
+                if oldest_file and oldest_file == self._loaded_file:
+                    relative_file = self._loaded_file
+                else:
+                    for file in os.listdir(directory):
+                        filepath = os.path.join(directory, file)
+                        if not os.path.isfile(filepath):
+                            continue
+                        file_creation_time = os.path.getctime(filepath)
 
-                    if relative_file is None:
-                        relative_file = filepath
+                        if relative_file is None:
+                            relative_file = filepath
 
-                    if loaded_file_creation_time < file_creation_time:
-                        files.append(filepath)
+                        if loaded_file_creation_time > file_creation_time:
+                            files.append(filepath)
 
-                relative_file = min(files, key=os.path.getctime)
-        else:
-            if self._get_file(directory=directory, oldest=True) == self._loaded_file:
-                relative_file = self._loaded_file
-            else:
-                for file in os.listdir(directory):
-                    filepath = os.path.join(directory, file)
-                    file_creation_time = os.path.getctime(filepath)
+                    if files:
+                        relative_file = max(files, key=os.path.getctime)
+                    else:
+                        relative_file = self._loaded_file
 
-                    if relative_file is None:
-                        relative_file = filepath
-
-                    if loaded_file_creation_time > file_creation_time:
-                        files.append(filepath)
-
-                relative_file = max(files, key=os.path.getctime)
-
-        return relative_file
+            return relative_file
+        except (OSError, PermissionError):
+            return None
 
     def load_next_file(self):
-        # Set / Create directory
-        target_directory = caget("13IDDLF1:cam1:FilePath.VAL", as_string=True)
-        target_directory = target_directory.split("\\")[4].strip()
-        target_directory = (
-                self.station.base_dir + f"/{target_directory}" + "/Absorption_Scans/"
-        )
+        target_directory = None
+        
+        # Priority 1: If a file is manually loaded, always use its directory as the base
+        if self._loaded_file and os.path.exists(self._loaded_file):
+            target_directory = os.path.dirname(self._loaded_file)
+        else:
+            # Priority 2: Fall back to EPICS path only if no file is manually loaded
+            # Try to get directory from EPICS
+            try:
+                epics_path = caget("13IDDLF1:cam1:FilePath.VAL", as_string=True)
+                if epics_path:
+                    try:
+                        target_directory = epics_path.split("\\")[4].strip()
+                        target_directory = (
+                            self.station.base_dir + f"/{target_directory}" + "/Absorption_Scans/"
+                        )
+                    except (IndexError, AttributeError):
+                        # EPICS path format is unexpected, try to use it directly or construct differently
+                        target_directory = None
+            except Exception:
+                # EPICS connection failed, target_directory remains None
+                pass
+        
+        # Check if directory exists
+        if not target_directory:
+            QtWidgets.QMessageBox.information(
+                None, "No Folder Selected", "Unable to determine folder path from EPICS. Please load a file manually first."
+            )
+            return
+            
+        if not os.path.exists(target_directory) or not os.path.isdir(target_directory):
+            QtWidgets.QMessageBox.information(
+                None, "Folder Not Found", f"Folder does not exist: {target_directory}\nPlease load a file manually first."
+            )
+            return
 
         filename = self._get_relative_file(directory=target_directory, next_file=True)
+        if not filename:
+            QtWidgets.QMessageBox.information(
+                None, "No More Files", "No more files found in this directory."
+            )
+            return
+            
         self._loaded_file = filename
         self.loaded_file_changed.emit(self._loaded_file)
 
@@ -649,14 +722,49 @@ class ScanningController(QObject):
         self.scanning_view.plot.rescale_plot()
 
     def load_previous_file(self):
-        # Set / Create directory
-        target_directory = caget("13IDDLF1:cam1:FilePath.VAL", as_string=True)
-        target_directory = target_directory.split("\\")[4].strip()
-        target_directory = (
-                self.station.base_dir + f"/{target_directory}" + "/Absorption_Scans/"
-        )
+        target_directory = None
+        
+        # Priority 1: If a file is manually loaded, always use its directory as the base
+        if self._loaded_file and os.path.exists(self._loaded_file):
+            target_directory = os.path.dirname(self._loaded_file)
+        else:
+            # Priority 2: Fall back to EPICS path only if no file is manually loaded
+            # Try to get directory from EPICS
+            try:
+                epics_path = caget("13IDDLF1:cam1:FilePath.VAL", as_string=True)
+                if epics_path:
+                    try:
+                        target_directory = epics_path.split("\\")[4].strip()
+                        target_directory = (
+                            self.station.base_dir + f"/{target_directory}" + "/Absorption_Scans/"
+                        )
+                    except (IndexError, AttributeError):
+                        # EPICS path format is unexpected, try to use it directly or construct differently
+                        target_directory = None
+            except Exception:
+                # EPICS connection failed, target_directory remains None
+                pass
+        
+        # Check if directory exists
+        if not target_directory:
+            QtWidgets.QMessageBox.information(
+                None, "No Folder Selected", "Unable to determine folder path from EPICS. Please load a file manually first."
+            )
+            return
+            
+        if not os.path.exists(target_directory) or not os.path.isdir(target_directory):
+            QtWidgets.QMessageBox.information(
+                None, "Folder Not Found", f"Folder does not exist: {target_directory}\nPlease load a file manually first."
+            )
+            return
 
         filename = self._get_relative_file(directory=target_directory)
+        if not filename:
+            QtWidgets.QMessageBox.information(
+                None, "No More Files", "No more files found in this directory."
+            )
+            return
+            
         self._loaded_file = filename
         self.loaded_file_changed.emit(self._loaded_file)
 
@@ -701,11 +809,24 @@ class ScanningController(QObject):
     def load_from_file(self):
         if not self._trj_running:
             # Set / Create directory
-            target_directory = caget("13IDDLF1:cam1:FilePath.VAL", as_string=True)
-            target_directory = target_directory.split("\\")[4].strip()
-            target_directory = (
-                    self.station.base_dir + f"/{target_directory}" + "/Absorption_Scans/"
-            )
+            target_directory = None
+            try:
+                epics_path = caget("13IDDLF1:cam1:FilePath.VAL", as_string=True)
+                if epics_path:
+                    try:
+                        target_directory = epics_path.split("\\")[4].strip()
+                        target_directory = (
+                            self.station.base_dir + f"/{target_directory}" + "/Absorption_Scans/"
+                        )
+                    except (IndexError, AttributeError):
+                        # EPICS path format is unexpected, use base directory as fallback
+                        target_directory = self.station.base_dir
+            except Exception:
+                # EPICS connection failed, use base directory as fallback
+                target_directory = self.station.base_dir
+            
+            if not target_directory:
+                target_directory = self.station.base_dir
 
             dialog = QtWidgets.QFileDialog()
             dialog.setFileMode(QtWidgets.QFileDialog.ExistingFile)
@@ -714,6 +835,9 @@ class ScanningController(QObject):
                 dialog, "Open file", target_directory, "CSV Files (*.csv)"
             )
 
+            if not filename[0]:  # User cancelled file dialog
+                return
+                
             self._loaded_file = filename[0]
             self.loaded_file_changed.emit(self._loaded_file)
 
