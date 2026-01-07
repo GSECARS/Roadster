@@ -407,10 +407,18 @@ class ScanningController(QObject):
         time.sleep(3)
 
         # Add delay to start after the trajectory has began.
-        while self.station.trj_running:
+        while self.station.trj_running and not self.station.trj_aborted and not self.station.aborted:
 
             if self._fly_scan_starting:
-                time.sleep(scan.exposure_time / 2)
+                # Break sleep into smaller chunks to check abort status
+                sleep_time = scan.exposure_time / 2
+                elapsed = 0
+                while elapsed < sleep_time and not self.station.trj_aborted and not self.station.aborted:
+                    time.sleep(0.1)
+                    elapsed += 0.1
+
+                if self.station.trj_aborted or self.station.aborted:
+                    break
 
                 # Get fly data
                 data_array = caget(self.station.miscellaneous.mcs_channel.value[1])
@@ -420,26 +428,29 @@ class ScanningController(QObject):
                     y_list=data_array,
                     auto_scale=True,
                 )
-                time.sleep(scan.exposure_time / 2)
+                
+                # Break sleep into smaller chunks to check abort status
+                elapsed = 0
+                while elapsed < sleep_time and not self.station.trj_aborted and not self.station.aborted:
+                    time.sleep(0.1)
+                    elapsed += 0.1
 
         self._fly_scan_starting = False
 
-        if self.station.trj_aborted:
+        if self.station.trj_aborted or self.station.aborted:
             self._abort_scan()
 
     def _abort_scan(self):
         print("Aborted Now")
 
+        # Always set both abort flags when abort button is clicked
         self.station.aborted = True
+        self.station.trj_aborted = True
 
-        if self.station.trj_aborted:
-            # Set status to running and aborted
-            self.update_status(running_status=False, label_text="Idle")
-        else:
-            # Set status to running and aborted
-            self.update_status(
-                abort_status=True, running_status=False, label_text="Aborting..."
-            )
+        # Set status to aborting
+        self.update_status(
+            abort_status=True, running_status=False, label_text="Aborting..."
+        )
 
         # Station stop
         self.station.stop_all()
@@ -1009,7 +1020,7 @@ class ScanningController(QObject):
                         )
                         read_data_thread.start()
 
-                    while self.station.trj_running:
+                    while self.station.trj_running and not self.station.trj_aborted and not self.station.aborted:
                         QtWidgets.QApplication.processEvents()
 
                     time.sleep(0.1)
@@ -1120,7 +1131,7 @@ class ScanningController(QObject):
                                 )
                                 read_data_thread.start()
 
-                            while self.station.trj_running:
+                            while self.station.trj_running and not self.station.trj_aborted and not self.station.aborted:
                                 QtWidgets.QApplication.processEvents()
 
                             time.sleep(0.1)
@@ -1282,7 +1293,7 @@ class ScanningController(QObject):
                                         )
                                         read_data_thread.start()
 
-                                    while self.station.trj_running:
+                                    while self.station.trj_running and not self.station.trj_aborted and not self.station.aborted:
                                         QtWidgets.QApplication.processEvents()
 
                                     if not self.station.trj_aborted and not self.station.aborted:
@@ -1463,7 +1474,14 @@ class ScanningController(QObject):
             caput(self.station.miscellaneous.pd_count_time.value[1], exposure_time)
 
         caput(pd_count, 1)
-        time.sleep(sleep_time)
+        # Break sleep into smaller chunks to check abort status
+        elapsed = 0
+        while elapsed < sleep_time and not self.station.trj_aborted and not self.station.aborted:
+            time.sleep(0.1)
+            elapsed += 0.1
+
+        if self.station.trj_aborted or self.station.aborted:
+            return
 
         # Read counts
         counts = caget(scaler[1])
@@ -1486,7 +1504,14 @@ class ScanningController(QObject):
 
                 # Count
                 caput(pd_count, 1)
-                time.sleep(sleep_time)
+                # Break sleep into smaller chunks to check abort status
+                elapsed = 0
+                while elapsed < sleep_time and not self.station.trj_aborted and not self.station.aborted:
+                    time.sleep(0.1)
+                    elapsed += 0.1
+
+                if self.station.trj_aborted or self.station.aborted:
+                    break
 
                 # Read counts
                 counts = caget(scaler[1])
