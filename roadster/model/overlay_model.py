@@ -10,10 +10,15 @@ class OverlayModel:
     x_data: List[float]
     y_data: List[float]
     color: Tuple[int, int, int] = (255, 0, 0)  # RGB tuple, default red
-    offset: float = 0.0
+    shift: float = 0.0  # X-axis shift
+    offset: float = 0.0  # Y-axis offset
     scale: float = 1.0
     visible: bool = True
     plot_item = None  # Will store the pyqtgraph PlotDataItem reference
+    
+    def get_transformed_x_data(self) -> List[float]:
+        """Returns x_data with shift applied."""
+        return [x + self.shift for x in self.x_data]
     
     def get_transformed_y_data(self) -> List[float]:
         """Returns y_data with scale and offset applied."""

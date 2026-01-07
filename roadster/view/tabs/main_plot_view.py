@@ -79,6 +79,8 @@ class BasePlotWidget(QtWidgets.QWidget, QtCore.QObject):
         self.btn_add_overlay = QtWidgets.QPushButton("Add")
         self.btn_save_current = QtWidgets.QPushButton("Add as overlay")
         self.btn_clear_overlays = QtWidgets.QPushButton("Clear")
+        self.lbl_shift_step = QtWidgets.QLabel("Shift step:")
+        self.spin_shift_step = QtWidgets.QDoubleSpinBox()
         self.lbl_offset_step = QtWidgets.QLabel("Offset step:")
         self.spin_offset_step = QtWidgets.QDoubleSpinBox()
         self.lbl_scale_step = QtWidgets.QLabel("Scale step:")
@@ -360,7 +362,7 @@ class BasePlotWidget(QtWidgets.QWidget, QtCore.QObject):
                 # Write positions and counts
                 for i in range(0, len(self._x_list) - 1):
                     collection_file.write(
-                        f"{self._x_list[i]},{raw_data[i]},{self._y_list[i]}\n"
+                        f"{self._x_list[i]},{raw_data[i] if raw_data is not None else self._y_list[i]},{self._y_list[i]}\n"
                     )
             else:
                 collection_file.write("#Positions,Counts\n")
@@ -381,7 +383,7 @@ class BasePlotWidget(QtWidgets.QWidget, QtCore.QObject):
             self._plot_widget.getViewBox().invertY(False)
             self.inverted_mode = False
 
-    def derivative_plot(self) -> (float, float):
+    def derivative_plot(self) -> tuple[list[float], list[float]]:
         """Plots the derivative of the x and y arrays of the plot."""
 
         # Check for derivative status
@@ -470,7 +472,7 @@ class BasePlotWidget(QtWidgets.QWidget, QtCore.QObject):
 
         return center
 
-    def fit(self, center: float, sigma: float) -> float:
+    def fit(self, center: float, sigma: float) -> float | None:
         if self._x_list and self._y_list:
             fit_model = Model(lineshapes.gaussian)
             fit_results = fit_model.fit(
@@ -488,7 +490,7 @@ class BasePlotWidget(QtWidgets.QWidget, QtCore.QObject):
 
             return fitted_peak_position
 
-    def find_peak(self) -> float:
+    def find_peak(self) -> float | None:
 
         if self._x_list and self._y_list:
             x_peak_position = self._x_list[self._y_list.index(max(self._y_list))]
@@ -784,8 +786,8 @@ class BasePlotWidget(QtWidgets.QWidget, QtCore.QObject):
 
     def _configure_overlay_table(self) -> None:
         """Configures the overlay management table."""
-        self.overlay_table.setColumnCount(6)
-        self.overlay_table.setHorizontalHeaderLabels(["Filename", "Color", "Offset", "Scale", "Visible", "Remove"])
+        self.overlay_table.setColumnCount(7)
+        self.overlay_table.setHorizontalHeaderLabels(["Filename", "Color", "Shift", "Offset", "Scale", "Visible", "Remove"])
         self.overlay_table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
         
         # Set size policy to expand based on content
@@ -803,10 +805,11 @@ class BasePlotWidget(QtWidgets.QWidget, QtCore.QObject):
         header.setStretchLastSection(False)
         header.setSectionResizeMode(0, QtWidgets.QHeaderView.Stretch)
         self.overlay_table.setColumnWidth(1, 60)   # Color
-        self.overlay_table.setColumnWidth(2, 100)  # Offset
-        self.overlay_table.setColumnWidth(3, 100)  # Scale
-        self.overlay_table.setColumnWidth(4, 60)   # Visible
-        self.overlay_table.setColumnWidth(5, 70)   # Remove
+        self.overlay_table.setColumnWidth(2, 100)  # Shift
+        self.overlay_table.setColumnWidth(3, 100)  # Offset
+        self.overlay_table.setColumnWidth(4, 100)  # Scale
+        self.overlay_table.setColumnWidth(5, 60)   # Visible
+        self.overlay_table.setColumnWidth(6, 70)   # Remove
         
         # Configure add overlay button
         self.btn_add_overlay.setObjectName("btn-main")
@@ -819,6 +822,14 @@ class BasePlotWidget(QtWidgets.QWidget, QtCore.QObject):
         # Configure clear all button
         self.btn_clear_overlays.setObjectName("btn-main")
         self.btn_clear_overlays.clicked.connect(self.clear_all_overlays)
+        
+        # Configure shift step control
+        self.spin_shift_step.setRange(0.0001, 100)
+        self.spin_shift_step.setValue(0.01)
+        self.spin_shift_step.setDecimals(4)
+        self.spin_shift_step.setSingleStep(0.01)
+        self.spin_shift_step.setFixedWidth(80)
+        self.spin_shift_step.valueChanged.connect(self._update_all_shift_steps)
         
         # Configure offset step control
         self.spin_offset_step.setRange(0.0001, 100)
@@ -865,6 +876,7 @@ class BasePlotWidget(QtWidgets.QWidget, QtCore.QObject):
             x_data=self._x_list.copy(),
             y_data=self._y_list.copy(),
             color=color,
+            shift=0.0,
             offset=0.0,
             visible=True
         )
@@ -872,7 +884,7 @@ class BasePlotWidget(QtWidgets.QWidget, QtCore.QObject):
         # Plot the overlay
         pen = pg.mkPen(color=color, width=2)
         overlay.plot_item = self._plot_widget.plot(
-            overlay.x_data,
+            overlay.get_transformed_x_data(),
             overlay.get_transformed_y_data(),
             pen=pen,
             symbol='o',
@@ -929,6 +941,7 @@ class BasePlotWidget(QtWidgets.QWidget, QtCore.QObject):
                     x_data=x_data,
                     y_data=y_data,
                     color=color,
+                    shift=0.0,
                     offset=0.0,
                     visible=True
                 )
@@ -940,7 +953,7 @@ class BasePlotWidget(QtWidgets.QWidget, QtCore.QObject):
                 # Plot the overlay with symbols like the reference line
                 pen = pg.mkPen(color=color, width=2)
                 overlay.plot_item = self._plot_widget.plot(
-                    overlay.x_data,
+                    overlay.get_transformed_x_data(),
                     overlay.get_transformed_y_data(),
                     pen=pen,
                     symbol='o',
@@ -981,17 +994,24 @@ class BasePlotWidget(QtWidgets.QWidget, QtCore.QObject):
             self.overlay_table.setMinimumHeight(capped_height)
             self.overlay_table.setMaximumHeight(capped_height)
     
+    def _update_all_shift_steps(self, step_value: float) -> None:
+        """Updates the step size for all shift spinboxes in the table."""
+        for row in range(self.overlay_table.rowCount()):
+            shift_spin = self.overlay_table.cellWidget(row, 2)
+            if shift_spin:
+                shift_spin.setSingleStep(step_value)
+    
     def _update_all_offset_steps(self, step_value: float) -> None:
         """Updates the step size for all offset spinboxes in the table."""
         for row in range(self.overlay_table.rowCount()):
-            offset_spin = self.overlay_table.cellWidget(row, 2)
+            offset_spin = self.overlay_table.cellWidget(row, 3)
             if offset_spin:
                 offset_spin.setSingleStep(step_value)
     
     def _update_all_scale_steps(self, step_value: float) -> None:
         """Updates the step size for all scale spinboxes in the table."""
         for row in range(self.overlay_table.rowCount()):
-            scale_spin = self.overlay_table.cellWidget(row, 3)
+            scale_spin = self.overlay_table.cellWidget(row, 4)
             if scale_spin:
                 scale_spin.setSingleStep(step_value)
     
@@ -1011,6 +1031,15 @@ class BasePlotWidget(QtWidgets.QWidget, QtCore.QObject):
         color_btn.clicked.connect(lambda checked, r=row: self._change_overlay_color(r))
         self.overlay_table.setCellWidget(row, 1, color_btn)
         
+        # Shift spinbox
+        shift_spin = QtWidgets.QDoubleSpinBox()
+        shift_spin.setRange(-1000000, 1000000)
+        shift_spin.setValue(overlay.shift)
+        shift_spin.setSingleStep(self.spin_shift_step.value())
+        shift_spin.setDecimals(3)
+        shift_spin.valueChanged.connect(lambda value, r=row: self._change_overlay_shift(r, value))
+        self.overlay_table.setCellWidget(row, 2, shift_spin)
+        
         # Offset spinbox
         offset_spin = QtWidgets.QDoubleSpinBox()
         offset_spin.setRange(-1000000, 1000000)
@@ -1018,7 +1047,7 @@ class BasePlotWidget(QtWidgets.QWidget, QtCore.QObject):
         offset_spin.setSingleStep(self.spin_offset_step.value())
         offset_spin.setDecimals(3)
         offset_spin.valueChanged.connect(lambda value, r=row: self._change_overlay_offset(r, value))
-        self.overlay_table.setCellWidget(row, 2, offset_spin)
+        self.overlay_table.setCellWidget(row, 3, offset_spin)
         
         # Scale spinbox
         scale_spin = QtWidgets.QDoubleSpinBox()
@@ -1027,7 +1056,7 @@ class BasePlotWidget(QtWidgets.QWidget, QtCore.QObject):
         scale_spin.setSingleStep(self.spin_scale_step.value())
         scale_spin.setDecimals(3)
         scale_spin.valueChanged.connect(lambda value, r=row: self._change_overlay_scale(r, value))
-        self.overlay_table.setCellWidget(row, 3, scale_spin)
+        self.overlay_table.setCellWidget(row, 4, scale_spin)
         
         # Visible checkbox
         visible_check = QtWidgets.QCheckBox()
@@ -1038,12 +1067,12 @@ class BasePlotWidget(QtWidgets.QWidget, QtCore.QObject):
         checkbox_layout.addWidget(visible_check)
         checkbox_layout.setAlignment(QtCore.Qt.AlignCenter)
         checkbox_layout.setContentsMargins(0, 0, 0, 0)
-        self.overlay_table.setCellWidget(row, 4, checkbox_widget)
+        self.overlay_table.setCellWidget(row, 5, checkbox_widget)
         
         # Remove button
         remove_btn = QtWidgets.QPushButton("Remove")
         remove_btn.clicked.connect(lambda checked, r=row: self._remove_overlay(r))
-        self.overlay_table.setCellWidget(row, 5, remove_btn)
+        self.overlay_table.setCellWidget(row, 6, remove_btn)
         
         # Resize table to fit content
         self._resize_table_to_content()
@@ -1067,6 +1096,16 @@ class BasePlotWidget(QtWidgets.QWidget, QtCore.QObject):
                     pen = pg.mkPen(color=overlay.color, width=2)
                     overlay.plot_item.setPen(pen)
     
+    def _change_overlay_shift(self, row: int, value: float) -> None:
+        """Change the shift (x-axis offset) of an overlay."""
+        if 0 <= row < len(self.overlays):
+            overlay = self.overlays[row]
+            overlay.shift = value
+            
+            # Update plot data (even if hidden, so it's correct when shown)
+            if overlay.plot_item:
+                overlay.plot_item.setData(overlay.get_transformed_x_data(), overlay.get_transformed_y_data())
+    
     def _change_overlay_offset(self, row: int, value: float) -> None:
         """Change the offset of an overlay."""
         if 0 <= row < len(self.overlays):
@@ -1075,7 +1114,7 @@ class BasePlotWidget(QtWidgets.QWidget, QtCore.QObject):
             
             # Update plot data (even if hidden, so it's correct when shown)
             if overlay.plot_item:
-                overlay.plot_item.setData(overlay.x_data, overlay.get_transformed_y_data())
+                overlay.plot_item.setData(overlay.get_transformed_x_data(), overlay.get_transformed_y_data())
     
     def _change_overlay_scale(self, row: int, value: float) -> None:
         """Change the scale of an overlay."""
@@ -1085,7 +1124,7 @@ class BasePlotWidget(QtWidgets.QWidget, QtCore.QObject):
             
             # Update plot data (even if hidden, so it's correct when shown)
             if overlay.plot_item:
-                overlay.plot_item.setData(overlay.x_data, overlay.get_transformed_y_data())
+                overlay.plot_item.setData(overlay.get_transformed_x_data(), overlay.get_transformed_y_data())
     
     def _toggle_overlay_visibility(self, row: int, state: int) -> None:
         """Toggles visibility of an overlay."""
@@ -1148,7 +1187,7 @@ class BasePlotWidget(QtWidgets.QWidget, QtCore.QObject):
                     # Re-add the plot item
                     pen = pg.mkPen(color=overlay.color, width=2)
                     overlay.plot_item = self._plot_widget.plot(
-                        overlay.x_data,
+                        overlay.get_transformed_x_data(),
                         overlay.get_transformed_y_data(),
                         pen=pen,
                         symbol='o',
@@ -1217,6 +1256,8 @@ class BasePlotWidget(QtWidgets.QWidget, QtCore.QObject):
         overlay_label.setStyleSheet("font-weight: bold; font-size: 11px;")
         overlay_header_layout.addWidget(overlay_label)
         overlay_header_layout.addStretch(1)
+        overlay_header_layout.addWidget(self.lbl_shift_step)
+        overlay_header_layout.addWidget(self.spin_shift_step)
         overlay_header_layout.addWidget(self.lbl_offset_step)
         overlay_header_layout.addWidget(self.spin_offset_step)
         overlay_header_layout.addWidget(self.lbl_scale_step)

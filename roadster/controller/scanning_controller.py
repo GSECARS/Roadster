@@ -69,6 +69,9 @@ class ScanningController(QObject):
         # Scanning modes.
         for item in self.scanning_model.scan_modes:
             self.scanning_view.cmb_scan_mode.addItem(item.value)
+        
+        # Set default scan mode to "Fly" (index 1: step=0, fly=1)
+        self.scanning_view.cmb_scan_mode.setCurrentIndex(1)
 
         # Scanning types.
         for item in self.scanning_model.scan_types:
@@ -824,13 +827,17 @@ class ScanningController(QObject):
                     scan_range = scan.lines[0].trj_range * 2
 
                     if scan_mode.lower() == "step":
+
+                        if scaler[1] == self.station.scalers.s9.value[1]:
+                            counter = self.station.miscellaneous.ketek_count.value[1]
+                        else:
+                            counter = self.station.miscellaneous.pd_count.value[1]
+                        
                         pinhole_scan_thread = threading.Thread(
                             target=self.step_scan,
                             kwargs={
                                 "target_stage": target_stage,
-                                "pd_count": self.station.miscellaneous.pd_count.value[
-                                    1
-                                ],
+                                "pd_count": counter,
                                 "scaler": scaler,
                                 "exposure_time": exposure,
                                 "positions": scan.lines[0].trj_positions,
@@ -931,13 +938,17 @@ class ScanningController(QObject):
                             scan_range = scan.lines[0].trj_range * 2
 
                             if scan_mode.lower() == "step":
+
+                                if scaler[1] == self.station.scalers.s9.value[1]:
+                                    counter = self.station.miscellaneous.ketek_count.value[1]
+                                else:
+                                    counter = self.station.miscellaneous.pd_count.value[1]
+                                    
                                 pinhole_scan_thread = threading.Thread(
                                     target=self.step_scan,
                                     kwargs={
                                         "target_stage": target_stage,
-                                        "pd_count": self.station.miscellaneous.pd_count.value[
-                                            1
-                                        ],
+                                        "pd_count": counter,
                                         "scaler": scaler,
                                         "exposure_time": exposure,
                                         "positions": scan.lines[0].trj_positions,
@@ -1080,13 +1091,17 @@ class ScanningController(QObject):
                                     )
 
                                     if scan_mode.lower() == "step":
+
+                                        if scaler[1] == self.station.scalers.s9.value[1]:
+                                            counter = self.station.miscellaneous.ketek_count.value[1]
+                                        else:
+                                            counter = self.station.miscellaneous.pd_count.value[1]
+
                                         centering_scan_thread = threading.Thread(
                                             target=self.step_scan,
                                             kwargs={
                                                 "target_stage": target_stage,
-                                                "pd_count": self.station.miscellaneous.pd_count.value[
-                                                    1
-                                                ],
+                                                "pd_count": counter,
                                                 "scaler": scaler,
                                                 "exposure_time": exposure,
                                                 "positions": scan.lines[
@@ -1229,13 +1244,17 @@ class ScanningController(QObject):
                     self.update_status(running_status=True, label_text="Scanning...")
 
                     if scan_mode.lower() == "step":
+
+                        if scaler[1] == self.station.scalers.s9.value[1]:
+                            counter = self.station.miscellaneous.ketek_count.value[1]
+                        else:
+                            counter = self.station.miscellaneous.pd_count.value[1]
+
                         single_scan_thread = threading.Thread(
                             target=self.step_scan,
                             kwargs={
                                 "target_stage": target_stage,
-                                "pd_count": self.station.miscellaneous.pd_count.value[
-                                    1
-                                ],
+                                "pd_count": counter,
                                 "scaler": scaler,
                                 "exposure_time": exposure,
                                 "positions": scan.lines[0].trj_positions,
@@ -1308,17 +1327,17 @@ class ScanningController(QObject):
     ):
         sleep_time = exposure_time + 0.1
 
-        # Set count type to oneshot
-        caput(self.station.miscellaneous.pd_count_type.value[1], 0)
-        time.sleep(0.5)
+        if scaler != self.station.scalers.s9.value[1]:
+            # Set count type to oneshot
+            caput(self.station.miscellaneous.pd_count_type.value[1], 0)
+            time.sleep(0.5)
 
-        # Set scaler counter to done state
-        caput(self.station.miscellaneous.pd_count.value[1], 0)
+            # Set scaler counter to done state
+            caput(self.station.miscellaneous.pd_count.value[1], 0)
 
-        # Set exposure time.
-        caput(self.station.miscellaneous.pd_count_time.value[1], exposure_time)
+            # Set exposure time.
+            caput(self.station.miscellaneous.pd_count_time.value[1], exposure_time)
 
-        # Count the first step
         caput(pd_count, 1)
         time.sleep(sleep_time)
 

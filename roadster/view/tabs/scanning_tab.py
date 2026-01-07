@@ -185,13 +185,14 @@ class ScanningTab(QtWidgets.QWidget):
 
         # Set starting values
         self.lne_range.setText("0.1")
-        self.lne_step.setText("0.01")
+        self.lne_step.setText("0.003")
         self.lne_exposure.setText("0.1")
         self.lne_omega_rotation_range.setText("1")
 
     def _config_combo_boxes(self) -> None:
         """Configuration of the scanning tab combo box widgets."""
         # Set active item.
+        # Note: Scan mode default is set in controller's _populate_combo_boxes() after items are added
         self.cmb_scan_mode.setCurrentIndex(0)
         self.cmb_scan_type.setCurrentIndex(0)
         self.cmb_scaler.setCurrentIndex(0)
@@ -306,7 +307,7 @@ class ScanningTab(QtWidgets.QWidget):
 
         focal_correction = round(
             (
-                ((ch - ph) - (ch - nh))
+                ((ph - ch) - (nh - ch))
                 / (2 * math.sin(((po - no) / 2) * (math.pi / 180)))
             ),
             4,

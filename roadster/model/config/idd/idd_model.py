@@ -35,6 +35,7 @@ class IDDScalers(Enum):
     s6 = "IC_2", "13IDD:scaler1.S6"
     s7 = "IC_1", "13IDD:scaler1.S7"
     s8 = "I8", "13IDD:scaler1.S8"
+    s9 = "Ketek", "13KETEK1:mca1.R0"
 
     s2_calc = "LVP_PD Calc", "13IDD:scaler1_cts1.B"
     s3_calc = "LVP_IC Calc", "13IDD:scaler1_cts1.C"
@@ -52,6 +53,7 @@ class IDDMiscellaneous(Enum):
     station_stop = "Station stop", "13IDD:allstop"
     mirror_stop = "Mirror stop", "13Mirror:allstop"
     pd_count = "Photodiode count", "13IDD:scaler1.CNT"
+    ketek_count = "Ketek count", "13KETEK1:mca1EraseStart"
     pd_count_time = "Photodiode count time", "13IDD:scaler1.TP"
     pd_count_type = "Scaler count type", "13IDD:scaler1.CONT"
     mcs_control_channels = "Channels to use", "13IDD:MCS1:NuseAll"
