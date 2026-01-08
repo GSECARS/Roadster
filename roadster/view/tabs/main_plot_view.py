@@ -207,6 +207,23 @@ class BasePlotWidget(QtWidgets.QWidget, QtCore.QObject):
             labelOpts=label_options,
         )
 
+    @staticmethod
+    def _format_length_with_unit(value: float) -> str:
+        """
+        Formats a length value with appropriate unit.
+        If value < 1mm, displays in micrometers (um).
+        If value >= 1mm, displays in millimeters (mm).
+        """
+        abs_value = abs(value)
+        if abs_value < 1.0:
+            # Convert to micrometers
+            formatted_value = round(value * 1000, 4)
+            return f"{formatted_value} um"
+        else:
+            # Keep in millimeters
+            formatted_value = round(value, 4)
+            return f"{formatted_value} mm"
+
     def _configure_labels(self) -> None:
         # Set size
         self._coord_label.setFixedWidth(150)
@@ -463,7 +480,7 @@ class BasePlotWidget(QtWidgets.QWidget, QtCore.QObject):
         )
         # Set the size label
         self._calculated_size_label.setText(
-            f"Size: {round(self._calculated_size, 4)} mm"
+            f"Size: {self._format_length_with_unit(self._calculated_size)}"
         )
 
         self._update_marker_coordinates()
@@ -718,7 +735,13 @@ class BasePlotWidget(QtWidgets.QWidget, QtCore.QObject):
             delta *= direction
 
             # Set text
-            self.delta_position_label.setText(f"Delta: {delta} {unit}")
+            if unit == "mm":
+                # Format with appropriate unit (um or mm)
+                formatted_delta = self._format_length_with_unit(delta)
+                self.delta_position_label.setText(f"Delta: {formatted_delta}")
+            else:
+                # For non-mm units (e.g., "deg"), use original format
+                self.delta_position_label.setText(f"Delta: {delta} {unit}")
 
     def _update_marker_coordinates(self):
         """Used to update appropriate label with the latest marker coordinates."""

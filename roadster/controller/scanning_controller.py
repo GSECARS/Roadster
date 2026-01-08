@@ -305,20 +305,23 @@ class ScanningController(QObject):
                         self.scanning_view.plot.target_position_motor[1]
                     )
 
+                    move_distance = round(current_position - target_position, 4) * -1
+                    formatted_distance = self.scanning_view.plot._format_length_with_unit(move_distance)
                     self.msg_prompt = PromptModel(
                         parent=self.scanning_view,
                         msg_title="Move confirmation",
                         msg_text=f"The {motor_name} ({target_motor}) stage is going to move by "
-                        f"{round(current_position - target_position, 4) * -1} "
-                        f"mm. Do you want to continue?",
+                        f"{formatted_distance}. Do you want to continue?",
                         user_prompt=True,
                     )
 
                     if self.msg_prompt.response:
                         # Move within limits
                         caput(target_motor + ".VAL", target_position, wait=True)
+                        moved_value = round(current_position - target_position, 4) * -1
+                        formatted_moved = self.scanning_view.plot._format_length_with_unit(moved_value)
                         self.scanning_view.plot.moved_by_label.setText(
-                            f"Moved: {round(current_position - target_position, 4) * -1} mm"
+                            f"Moved: {formatted_moved}"
                         )
                         self.scanning_view.plot.update_delta_position()
                 else:
@@ -528,8 +531,8 @@ class ScanningController(QObject):
         _, rotation_stage = self.station.auto_centering_stages()
 
         if (
-            self.scanning_view.lbl_centering_correction.text().split()[0].strip()
-            == "None"
+            self.scanning_view._focal_correction_mm is None
+            or self.scanning_view.lbl_centering_correction.text() == "None"
         ):
             self.msg_prompt = PromptModel(
                 parent=self.scanning_view,
@@ -545,9 +548,8 @@ class ScanningController(QObject):
             )
             return None
 
-        focal_correction = float(
-            self.scanning_view.lbl_centering_correction.text().split()[0].strip()
-        )
+        # Get the raw focal correction value in mm (not from display label)
+        focal_correction = self.scanning_view._focal_correction_mm
 
         value = caget(self.station.stages.sample_focus.value[1]) - focal_correction
         high_limit = caget(self.station.stages.sample_focus.value[1] + ".HLM")
@@ -561,10 +563,11 @@ class ScanningController(QObject):
             )
             return None
 
+        formatted_correction = self.scanning_view.plot._format_length_with_unit(focal_correction)
         self.msg_prompt = PromptModel(
             parent=self.scanning_view,
             msg_title="Move confirmation",
-            msg_text=f"The Focus stage will be corrected by {focal_correction} mm and {rotation_stage[0]} "
+            msg_text=f"The Focus stage will be corrected by {formatted_correction} and {rotation_stage[0]} "
             f"({rotation_stage[1]}) will return to the central position. Do you want to continue?",
             user_prompt=True,
         )
@@ -574,8 +577,9 @@ class ScanningController(QObject):
                 caput(rotation_stage[1], 0)
 
             caput(self.station.stages.sample_focus.value[1], value, wait=True)
+            formatted_moved = self.scanning_view.plot._format_length_with_unit(focal_correction)
             self.scanning_view.plot.moved_by_label.setText(
-                f"Moved: {focal_correction} mm"
+                f"Moved: {formatted_moved}"
             )
             self.scanning_view.lbl_centering_correction.setText("Applied")
 

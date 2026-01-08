@@ -13,6 +13,9 @@ class ScanningTab(QtWidgets.QWidget):
 
         # TODO: Change the plot widget.
         self.plot = BasePlotWidget()
+        
+        # Store raw focal correction value in mm (for motor commands)
+        self._focal_correction_mm = None
 
         # Expert mode widgets
         self.btn_expert_toggle = QtWidgets.QPushButton()
@@ -298,6 +301,9 @@ class ScanningTab(QtWidgets.QWidget):
 
         for label in labels:
             label.setText("None")
+        
+        # Reset the stored raw focal correction value
+        self._focal_correction_mm = None
 
     def calculate_focal_correction(self):
         ch = float(self.lbl_saved_central_position.text().split(",")[0].strip())
@@ -316,7 +322,12 @@ class ScanningTab(QtWidgets.QWidget):
             4,
         )
 
-        self.lbl_centering_correction.setText(str(focal_correction) + " mm")
+        # Store raw value in mm for motor commands
+        self._focal_correction_mm = focal_correction
+        
+        # Display with appropriate unit
+        formatted_correction = self.plot._format_length_with_unit(focal_correction)
+        self.lbl_centering_correction.setText(formatted_correction)
 
     def _layout_scanning(self) -> None:
 
