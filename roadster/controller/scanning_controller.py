@@ -63,6 +63,10 @@ class ScanningController(QObject):
         # Status
         self._trj_running = False
         self._aborted = False
+        
+        # Store scan state for abort recovery
+        self._scan_center = None
+        self._scan_target_stage = None
 
     def _populate_combo_boxes(self) -> None:
         """Adds the combo box items."""
@@ -437,11 +441,14 @@ class ScanningController(QObject):
 
         self._fly_scan_starting = False
 
-        if self.station.trj_aborted or self.station.aborted:
-            self._abort_scan()
+        # Note: fly_scan will call scan_finished at the end, which will restore station and reset status
+        # So we don't need to call _abort_scan() here
 
     def _abort_scan(self):
         print("Aborted Now")
+
+        # Check if a scan is actually running
+        scan_was_running = self.station.trj_running or (self._scan_target_stage is not None and self._scan_center is not None)
 
         # Always set both abort flags when abort button is clicked
         self.station.aborted = True
@@ -454,6 +461,25 @@ class ScanningController(QObject):
 
         # Station stop
         self.station.stop_all()
+        
+        # Restore station if scan was started (shutter opened, motor moved)
+        # This handles the case where abort is clicked before scan thread starts
+        if self._scan_target_stage is not None and self._scan_center is not None:
+            self.station.restore_station(
+                target_stage=self._scan_target_stage,
+                center=self._scan_center,
+                centering=False,
+                revert_position=True,
+            )
+            # Clear stored values
+            self._scan_target_stage = None
+            self._scan_center = None
+        
+        # If no scan was running, reset status back to Idle immediately
+        if not scan_was_running:
+            self.update_status(
+                abort_status=False, running_status=False, label_text="Idle"
+            )
 
     def _update_status_label(self, text: str, color: str):
         self.scanning_view.lbl_scanning_status.setText(text)
@@ -938,6 +964,10 @@ class ScanningController(QObject):
         scaler, correction_scaler = self.get_scalers()
 
         center = caget(target_stage)
+        
+        # Store scan state for abort recovery
+        self._scan_target_stage = target_stage
+        self._scan_center = center
 
         scan = self.scanning_model.create_scan(
             trj_range=trj_range, step=step, exposure=exposure, center=center
@@ -1041,117 +1071,136 @@ class ScanningController(QObject):
 
                         time.sleep(0.1)
 
-                        # Switch to vertical scan
-                        self.set_target_stage(
-                            self.station.stages.pinhole_vertical.value
-                        )
-                        target_stage = self.get_target_stage()
-                        center = caget(target_stage)
+                        # Check abort before starting second scan
+                        if not self.station.trj_aborted and not self.station.aborted:
+                            # Switch to vertical scan
+                            self.set_target_stage(
+                                self.station.stages.pinhole_vertical.value
+                            )
+                            target_stage = self.get_target_stage()
+                            center = caget(target_stage)
+                            
+                            # Update stored scan state for second scan
+                            self._scan_target_stage = target_stage
+                            self._scan_center = center
 
-                        scan = self.scanning_model.create_scan(
-                            trj_range=trj_range,
-                            step=step,
-                            exposure=exposure,
-                            center=center,
-                        )
-
-                        if self.station.prepare_for_scan(
-                            target_stage=target_stage,
-                            scan=scan,
-                            expert=self.station.expert_mode,
-                        ):
-
-                            # Clear plot
-                            self.scanning_view.plot.reset_plot()
-                            QtWidgets.QApplication.processEvents()
-
-                            # Set status
-                            self.update_status(
-                                running_status=True, label_text="Scanning..."
+                            scan = self.scanning_model.create_scan(
+                                trj_range=trj_range,
+                                step=step,
+                                exposure=exposure,
+                                center=center,
                             )
 
-                            scan_range = scan.lines[0].trj_range * 2
+                            if self.station.prepare_for_scan(
+                                target_stage=target_stage,
+                                scan=scan,
+                                expert=self.station.expert_mode,
+                            ):
 
-                            if scan_mode.lower() == "step":
+                                # Clear plot
+                                self.scanning_view.plot.reset_plot()
+                                QtWidgets.QApplication.processEvents()
 
-                                if scaler[1] == self.station.scalers.s9.value[1]:
-                                    counter = self.station.miscellaneous.ketek_count.value[1]
+                                # Set status
+                                self.update_status(
+                                    running_status=True, label_text="Scanning..."
+                                )
+
+                                scan_range = scan.lines[0].trj_range * 2
+
+                                if scan_mode.lower() == "step":
+
+                                    if scaler[1] == self.station.scalers.s9.value[1]:
+                                        counter = self.station.miscellaneous.ketek_count.value[1]
+                                    else:
+                                        counter = self.station.miscellaneous.pd_count.value[1]
+                                        
+                                    pinhole_scan_thread = threading.Thread(
+                                        target=self.step_scan,
+                                        kwargs={
+                                            "target_stage": target_stage,
+                                            "pd_count": counter,
+                                            "scaler": scaler,
+                                            "exposure_time": exposure,
+                                            "positions": scan.lines[0].trj_positions,
+                                            "center": center,
+                                            "centering": centering,
+                                            "revert_position": revert_position,
+                                            "scan_mode": scan_mode,
+                                            "energy": energy,
+                                            "current": current,
+                                            "scan": scan,
+                                            "correction_scaler": correction_scaler,
+                                        },
+                                    )
+
+                                    self.station.prepare_shutter()
+
                                 else:
-                                    counter = self.station.miscellaneous.pd_count.value[1]
-                                    
-                                pinhole_scan_thread = threading.Thread(
-                                    target=self.step_scan,
-                                    kwargs={
-                                        "target_stage": target_stage,
-                                        "pd_count": counter,
-                                        "scaler": scaler,
-                                        "exposure_time": exposure,
-                                        "positions": scan.lines[0].trj_positions,
-                                        "center": center,
-                                        "centering": centering,
-                                        "revert_position": revert_position,
-                                        "scan_mode": scan_mode,
-                                        "energy": energy,
-                                        "current": current,
-                                        "scan": scan,
-                                        "correction_scaler": correction_scaler,
-                                    },
-                                )
+                                    xps_stage, xps_group = self.get_xps_stage_and_group()
+                                    scantime = scan.exposure_time * (scan.points - 1)
 
-                                self.station.prepare_shutter()
+                                    pinhole_scan_thread = threading.Thread(
+                                        target=self.fly_scan,
+                                        kwargs={
+                                            "xps_stage": xps_stage,
+                                            "xps_group": xps_group,
+                                            "scan_range": scan_range,
+                                            "scantime": scantime,
+                                            "step": step,
+                                            "scan": scan,
+                                            "target_stage": target_stage,
+                                            "center": center,
+                                            "centering": centering,
+                                            "revert_position": revert_position,
+                                            "scan_mode": scan_mode,
+                                            "energy": energy,
+                                            "current": current,
+                                        },
+                                    )
 
+                                pinhole_scan_thread.start()
+
+                                if scan_mode.lower() != "step":
+                                    read_data_thread = threading.Thread(
+                                        target=self.read_fly_data, kwargs={"scan": scan}
+                                    )
+                                    read_data_thread.start()
+
+                                while self.station.trj_running and not self.station.trj_aborted and not self.station.aborted:
+                                    QtWidgets.QApplication.processEvents()
+
+                                time.sleep(0.1)
+
+                                if not self.station.trj_aborted and not self.station.aborted:
+                                    # Find peak and move horizontal
+                                    # peak = self.scanning_view.plot.find_peak()
+                                    peak = self.scanning_view.plot.fit(center=center, sigma=scan_range)
+
+                                    # Center
+                                    # center_position = (
+                                    #     self.scanning_view.plot.center_plot()
+                                    # )
+                                    time.sleep(0.1)
+                                    QtWidgets.QApplication.processEvents()
+                                    self._delta_position_changed.emit(center)
+                                    caput(target_stage, round(peak, 4), wait=True)
+
+                                    time.sleep(0.1)
                             else:
-                                xps_stage, xps_group = self.get_xps_stage_and_group()
-                                scantime = scan.exposure_time * (scan.points - 1)
-
-                                pinhole_scan_thread = threading.Thread(
-                                    target=self.fly_scan,
-                                    kwargs={
-                                        "xps_stage": xps_stage,
-                                        "xps_group": xps_group,
-                                        "scan_range": scan_range,
-                                        "scantime": scantime,
-                                        "step": step,
-                                        "scan": scan,
-                                        "target_stage": target_stage,
-                                        "center": center,
-                                        "centering": centering,
-                                        "revert_position": revert_position,
-                                        "scan_mode": scan_mode,
-                                        "energy": energy,
-                                        "current": current,
-                                    },
+                                # Clear stored values since prepare_for_scan failed for second scan
+                                self._scan_target_stage = None
+                                self._scan_center = None
+                                self.msg_prompt = PromptModel(
+                                    parent=self.scanning_view,
+                                    msg_title="Collisions Errors - Stage Limits",
+                                    msg_text="Please make sure to remove the mirrors and/or microscope.\n"
+                                    "Make sure the scan range doesn't exceed the stage's limits.",
                                 )
-
-                            pinhole_scan_thread.start()
-
-                            if scan_mode.lower() != "step":
-                                read_data_thread = threading.Thread(
-                                    target=self.read_fly_data, kwargs={"scan": scan}
-                                )
-                                read_data_thread.start()
-
-                            while self.station.trj_running and not self.station.trj_aborted and not self.station.aborted:
-                                QtWidgets.QApplication.processEvents()
-
-                            time.sleep(0.1)
-
-                            if not self.station.trj_aborted and not self.station.aborted:
-                                # Find peak and move horizontal
-                                # peak = self.scanning_view.plot.find_peak()
-                                peak = self.scanning_view.plot.fit(center=center, sigma=scan_range)
-
-                                # Center
-                                # center_position = (
-                                #     self.scanning_view.plot.center_plot()
-                                # )
-                                time.sleep(0.1)
-                                QtWidgets.QApplication.processEvents()
-                                self._delta_position_changed.emit(center)
-                                caput(target_stage, round(peak, 4), wait=True)
-
-                                time.sleep(0.1)
             else:
+                # Clear stored values since prepare_for_scan failed
+                self._scan_target_stage = None
+                self._scan_center = None
                 self.msg_prompt = PromptModel(
                     parent=self.scanning_view,
                     msg_title="Collisions Errors - Stage Limits",
@@ -1329,9 +1378,22 @@ class ScanningController(QObject):
                                         caput(rotation_stage[1], position, wait=True)
 
                                         # Add some delay to display the center position
-                                        time.sleep(3)
+                                        # Check abort during delay
+                                        elapsed = 0
+                                        while elapsed < 3 and not self.station.trj_aborted and not self.station.aborted:
+                                            time.sleep(0.1)
+                                            elapsed += 0.1
+                                            QtWidgets.QApplication.processEvents()
+
+                                        # Check abort before continuing to next scan
+                                        if self.station.trj_aborted or self.station.aborted:
+                                            break
 
                                         center = caget(target_stage)
+                                        
+                                        # Update stored scan state for next scan
+                                        self._scan_target_stage = target_stage
+                                        self._scan_center = center
 
                                         scan = self.scanning_model.create_scan(
                                             trj_range=trj_range,
@@ -1344,10 +1406,26 @@ class ScanningController(QObject):
                                             # Clear plot
                                             self.scanning_view.plot.reset_plot()
 
-                    if self.station.trj_aborted and not self.station.aborted:
+                    # Handle abort - restore station and move rotation stage back
+                    if self.station.trj_aborted or self.station.aborted:
+                        # Restore station (close shutter, move motor back)
+                        if self._scan_target_stage is not None and self._scan_center is not None:
+                            self.station.restore_station(
+                                target_stage=self._scan_target_stage,
+                                center=self._scan_center,
+                                centering=False,
+                                revert_position=True,
+                            )
+                            # Clear stored values
+                            self._scan_target_stage = None
+                            self._scan_center = None
+                        # Move rotation stage back to starting position
                         caput(rotation_stage[1], starting_position, wait=True)
 
                 else:
+                    # Clear stored values since prepare_for_scan failed
+                    self._scan_target_stage = None
+                    self._scan_center = None
                     self.msg_prompt = PromptModel(
                         parent=self.scanning_view,
                         msg_title="Collisions Errors - Stage Limits",
@@ -1355,6 +1433,9 @@ class ScanningController(QObject):
                         "Make sure the scan range doesn't exceed the stage's limits.",
                     )
             else:
+                # Clear stored values since prepare_for_auto_centering failed
+                self._scan_target_stage = None
+                self._scan_center = None
                 self.msg_prompt = PromptModel(
                     parent=self.scanning_view,
                     msg_title="Collisions Errors - Stage Limits",
@@ -1437,6 +1518,9 @@ class ScanningController(QObject):
                         )
                         read_data_thread.start()
             else:
+                # Clear stored values since prepare_for_scan failed
+                self._scan_target_stage = None
+                self._scan_center = None
                 self.msg_prompt = PromptModel(
                     parent=self.scanning_view,
                     msg_title="Collisions Errors - Stage Limits",
@@ -1481,6 +1565,24 @@ class ScanningController(QObject):
             elapsed += 0.1
 
         if self.station.trj_aborted or self.station.aborted:
+            # Still need to call scan_finished to restore station and reset status
+            if correction_scaler is not None:
+                raw_data = self.raw_data
+            else:
+                raw_data = []
+            self.scan_finished(
+                target_stage=target_stage,
+                center=center,
+                centering=centering,
+                revert_position=revert_position,
+                scan=scan,
+                scan_mode=scan_mode,
+                energy=energy,
+                current=current,
+                scaler=scaler,
+                correction_scaler=correction_scaler,
+                raw_data=raw_data,
+            )
             return
 
         # Read counts
@@ -1654,6 +1756,10 @@ class ScanningController(QObject):
             centering=centering,
             revert_position=revert_position,
         )
+        
+        # Clear stored scan state
+        self._scan_target_stage = None
+        self._scan_center = None
 
         # Set status
         self.update_status(abort_status=False, running_status=False, label_text="Idle")
