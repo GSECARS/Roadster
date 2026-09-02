@@ -476,7 +476,7 @@ class BasePlotWidget(QtWidgets.QWidget, QtCore.QObject):
 
         # Calculate the size
         self._calculated_size = abs(
-            self._upper_line.pos()[0] - self._lower_line.pos()[0]
+            self._upper_line.pos().x() - self._lower_line.pos().x()
         )
         # Set the size label
         self._calculated_size_label.setText(
@@ -574,7 +574,7 @@ class BasePlotWidget(QtWidgets.QWidget, QtCore.QObject):
         self._coord_y = coordinates.y()
 
         # Update the marker line coordinate values
-        if self.marker_coords != round(self._marker_line.pos()[0], 4):
+        if self.marker_coords != round(self._marker_line.pos().x(), 4):
             self._update_marker_coordinates()
 
         # Update coordinates label
@@ -746,7 +746,7 @@ class BasePlotWidget(QtWidgets.QWidget, QtCore.QObject):
     def _update_marker_coordinates(self):
         """Used to update appropriate label with the latest marker coordinates."""
         if self._marker_line in self._plot_widget.items:
-            self.marker_coords = round(self._marker_line.pos()[0], 4)
+            self.marker_coords = round(self._marker_line.pos().x(), 4)
             self._marker_coord_label.setText(f"Marker: {self.marker_coords} mm")
 
     def update_target_stage(self, stage: list):
