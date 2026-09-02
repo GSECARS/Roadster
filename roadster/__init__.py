@@ -1,11 +1,11 @@
 import argparse
 import os
-import shutil
 import sys
 from importlib.metadata import version as pkg_version
 from sys import platform
 
 from roadster.controller import MainController
+
 
 
 def _set_macos_dock_icon(icon_path: str) -> None:
@@ -33,14 +33,7 @@ def main() -> None:
         from pyshortcuts import make_shortcut
         bindir = "Scripts" if os.name == "nt" else "bin"
         script = os.path.join(sys.prefix, bindir, "roadster")
-        iconfile = os.path.join(_icons_dir, "roadster.png")
-        if os.name == "nt":
-            ico = os.path.join(_icons_dir, "roadster.ico")
-            if os.path.exists(ico):
-                local_icon = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "roadster.ico")
-                shutil.copy2(ico, local_icon)
-                iconfile = local_icon
-        make_shortcut(script, name="Roadster", icon=iconfile, terminal=False,
+        make_shortcut(script, name="Roadster", terminal=False,
                       public=args.public, folder="GSEApps" if args.public else None)
         return
 
