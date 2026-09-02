@@ -1,12 +1,9 @@
 import os
-from qtpy import QtWidgets, QtCore
+
+from qtpy import QtCore, QtWidgets
 
 from roadster.model import PromptModel, qss_path
 from roadster.view.tabs.scanning_tab import ScanningTab
-
-# Set scaling attributes before creating the Core application is created.
-QtWidgets.QApplication.setAttribute(QtCore.Qt.AA_EnableHighDpiScaling)
-QtWidgets.QApplication.setAttribute(QtCore.Qt.AA_UseHighDpiPixmaps)
 
 
 class MainView(QtWidgets.QMainWindow):
@@ -14,8 +11,6 @@ class MainView(QtWidgets.QMainWindow):
 
     def __init__(self):
         super(MainView, self).__init__(flags=QtCore.Qt.WindowFlags())
-
-        self.title = "Roadster"
 
         self.setStyleSheet(open(os.path.join(qss_path, "style.qss"), "r").read())
 
@@ -27,7 +22,6 @@ class MainView(QtWidgets.QMainWindow):
 
     def init_ui(self) -> None:
         """Init of ui elements."""
-        self.setWindowTitle(self.title)
         # TODO: Add an application icon. (.ico)
         # TODO: Add a QSplashScreen.
 
@@ -38,8 +32,8 @@ class MainView(QtWidgets.QMainWindow):
         # self.setCentralWidget(self.tabs)
         self.setCentralWidget(self.scanning)
 
-    def display_main_window(self):
-        # TODO: Implement a way to remember screen, position on the screen and application size, with default fallback.
+    def display_main_window(self, version: str = ""):
+        self.setWindowTitle(f"Roadster {version}")
         self.showNormal()
 
     def closeEvent(self, event) -> None:

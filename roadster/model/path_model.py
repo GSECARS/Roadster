@@ -1,5 +1,6 @@
 import os
+from pathlib import Path
 
-_assets_path = os.path.join(os.getcwd(), "roadster/assets")
-qss_path = os.path.join(_assets_path, "qss")
-icon_path = os.path.join(_assets_path, "icons")
+_assets_path = Path(__file__).parent.parent / "assets"
+qss_path = str(_assets_path / "qss")
+icon_path = str(_assets_path / "icons")
