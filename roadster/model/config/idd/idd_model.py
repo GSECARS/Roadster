@@ -78,7 +78,7 @@ class IDDDirectories(Enum):
 
 class IDDModel(StationModel):
     name = "13-ID-D"
-    base_dir = "T:/dac_user/2026/IDD_2026-1/"
+    base_dir = "T:/dac_user/2026/IDD_2026-2/"
 
     stages = IDDStages
     scalers = IDDScalers
