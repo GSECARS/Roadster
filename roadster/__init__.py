@@ -19,6 +19,19 @@ def _set_macos_dock_icon(icon_path: str) -> None:
         pass
 
 
+def _win_local_icon(src: str) -> str:
+    """Copy the .ico to %PROGRAMDATA%\\Roadster so Windows finds it before network shares mount."""
+    import shutil
+    dest_dir = os.path.join(os.environ.get("PROGRAMDATA", r"C:\ProgramData"), "Roadster")
+    try:
+        os.makedirs(dest_dir, exist_ok=True)
+        dest = os.path.join(dest_dir, "roadster.ico")
+        shutil.copy2(src, dest)
+        return dest
+    except OSError:
+        return src
+
+
 def main() -> None:
     """Main entry point for `roadster` console script."""
     parser = argparse.ArgumentParser("Roadster CLI")
@@ -33,7 +46,13 @@ def main() -> None:
         from pyshortcuts import make_shortcut
         bindir = "Scripts" if os.name == "nt" else "bin"
         script = os.path.join(sys.prefix, bindir, "roadster")
-        make_shortcut(script, name="Roadster", terminal=False,
+        if platform == "darwin":
+            icon = os.path.join(_icons_dir, "roadster.icns")
+        elif os.name == "nt":
+            icon = _win_local_icon(os.path.join(_icons_dir, "roadster.ico"))
+        else:
+            icon = os.path.join(_icons_dir, "roadster.png")
+        make_shortcut(script, name="Roadster", icon=icon, terminal=False,
                       public=args.public, folder="GSEApps" if args.public else None)
         return
 
@@ -52,10 +71,16 @@ def main() -> None:
     except Exception:
         _version = ""
 
+    if os.name == "nt":
+        import ctypes
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("GSECARS.Roadster")
+
     from qtpy import QtGui
     controller = MainController()
     icon_path = os.path.join(_icons_dir, "roadster.png")
-    controller._app.setWindowIcon(QtGui.QIcon(icon_path))
+    icon = QtGui.QIcon(icon_path)
+    controller._app.setWindowIcon(icon)
+    controller._view.setWindowIcon(icon)
     if platform == "darwin":
         _set_macos_dock_icon(icon_path)
     controller.run(_version)

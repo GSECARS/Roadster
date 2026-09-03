@@ -57,7 +57,7 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["roadster"]
-include = ["roadster/assets/*.png"]
+include = ["roadster/assets/**"]
 
 [tool.ruff]
 exclude = [
