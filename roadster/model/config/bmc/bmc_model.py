@@ -8,82 +8,55 @@ from roadster.model import MapModel, TrajectoryLine
 from roadster.model.config import StationModel
 
 
-class IDDStages(Enum):
+class BMCStages(Enum):
     # Enumeration of required stages.
-    sample_horizontal = "Horizontal", "13IDD:m98", "ST-Hor", "G6"
-    sample_vertical = "Vertical", "13IDD:m97", "ST-Vert", "G1"
-    sample_focus = "Focus", "13IDD:m99", "ST-Foc", "G3"
-    sample_omega = "Omega", "13IDD:Auto1:m1"
+    sample_horizontal = "Horizontal", "13BMC:m46"
+    sample_vertical = "Vertical", "13BMC:m45"
+    sample_focus = "Focus", "13BMC:m44"
+    sample_omega = "Phi", "13BMC:m33"
 
-    pinhole_horizontal = "Horizontal", "13IDD:m101", "PIN-Hor", "G5"
-    pinhole_vertical = "Vertical", "13IDD:m100", "PIN-Vert", "G4"
-    pinhole_position = "Pinhole Position", "13IDD:m22"
-
-    mirror_ds = "Mirror DS", "13IDD:m103"
-    mirror_us = "Mirror US", "13IDD:m102"
-
-    microscope = "Microscope", "13IDD:m67"
+    pinhole_horizontal = "Horizontal", "13BMC:m71"
+    pinhole_vertical = "Vertical", "13BMC:m72"
+    pinhole_position = "Pinhole Position", "13BMC:m73"
 
 
-class IDDScalers(Enum):
+class BMCScalers(Enum):
     # Enumeration with all available scalers.
     empty = "None", "None"
-    s2 = "LVP_PD", "13IDD:scaler1.S2"
-    s3 = "LVP_IC", "13IDD:scaler1.S3"
-    s4 = "DAC_PD", "13IDD:scaler1.S4"
-    s5 = "DAC_PD2", "13IDD:scaler1.S5"
-    s6 = "IC_2", "13IDD:scaler1.S6"
-    s7 = "IC_1", "13IDD:scaler1.S7"
-    s8 = "I8", "13IDD:scaler1.S8"
-    s9 = "Ketek", "13KETEK1:mca1.R0"
+    s2 = "I0", "13BMC:scaler1.S2"
+    s3 = "I1", "13BMC:scaler1.S3"
+    s4 = "I2", "13BMC:scaler1.S4"
+    s5 = "I3", "13BMC:scaler1.S5"
+    s6 = "I4", "13BMC:scaler1.S6"
 
-    s2_calc = "LVP_PD Calc", "13IDD:scaler1_cts1.B"
-    s3_calc = "LVP_IC Calc", "13IDD:scaler1_cts1.C"
-    s4_calc = "DAC_PD Calc", "13IDD:scaler1_cts1.D"
-    s5_calc = "DAC_PD2 Calc", "13IDD:scaler1_cts2.A"
-    s6_calc = "IC_2 Calc", "13IDD:scaler1_cts2.B"
-    s7_calc = "IC_1 Calc", "13IDD:scaler1_cts2.C"
-    s8_calc = "I8 Calc", "13IDD:scaler1_cts2.D"
+    s2_calc = "I0 Calc", "13BMC:scaler1_cts1.B"
+    s3_calc = "I1 Calc", "13BMC:scaler1_cts1.C"
+    s4_calc = "I2 Calc", "13BMC:scaler1_cts1.D"
+    s5_calc = "I3 Calc", "13BMC:scaler1_cts2.A"
+    s6_calc = "I4 Calc", "13BMC:scaler1_cts2.B"
 
 
-class IDDMiscellaneous(Enum):
-    table_shutter = "Table shutter", "13IDD:TableShutter"  # 0: Close, 1: Open
-    photodiode = "Photodiode", "13IDD:Photodiode"  # 0: IN, 1: OUT
-    xps_stop = "Stages stop", "13IDD_DAC_XPS16:allstop"
-    station_stop = "Station stop", "13IDD:allstop"
-    mirror_stop = "Mirror stop", "13Mirror:allstop"
-    pd_count = "Photodiode count", "13IDD:scaler1.CNT"
-    ketek_count = "Ketek count", "13KETEK1:mca1EraseStart"
-    pd_count_time = "Photodiode count time", "13IDD:scaler1.TP"
-    pd_count_type = "Scaler count type", "13IDD:scaler1.CONT"
-    mcs_control_channels = "Channels to use", "13IDD:MCS1:NuseAll"
-    mcs_erase_start = "Erase start", "13IDD:MCS1:EraseStart"
-    mcs_stop = "Stop acquiring", "13IDD:MCS1:StopAll"
-    mcs_channel = "Array channel", "13IDD:MCS1:mca4"
-    mcs_ch_advance = "Channel advance source", "13IDD:MCS1:ChannelAdvance"
-    energy = "Energy", "13IDA:CDEn:E_RBV"
+class BMCMiscellaneous(Enum):
+    table_shutter = "Table shutter", "13BMC:BenchAtten1"  # 0: Close, 1: Open
+    station_stop = "Station stop", "13BMC:allstop"
+    xps_stop = "XPS stop", "13BMC_GPD_XPS:allstop"
+    pd_count = "Photodiode count", "13BMC:scaler1.CNT"
+    pd_count_time = "Photodiode count time", "13BMC:scaler1.TP"
+    pd_count_type = "Scaler count type", "13BMC:scaler1.CONT"
     current = "Ring current", "S:SRcurrentAI"
-    hutch = "Hutch status", "PA:13ID:STA_D_SRCHD_TO_B"
 
 
-class IDDXps(Enum):
-    host = "10.54.160.71"
-    username = "Administrator"
-    password = "Administrator"
+# class IDDDirectories(Enum):
+#    save_location = "data/"
 
 
-class IDDDirectories(Enum):
-    save_location = "data/"
+class BMCModel(StationModel):
+    name = "13-BM-C"
+    base_dir = "T:/dac_user/2026/BMC_2026-3/"
 
-
-class IDDModel(StationModel):
-    name = "13-ID-D"
-    base_dir = "T:/dac_user/2026/IDD_2026-2/"
-
-    stages = IDDStages
-    scalers = IDDScalers
-    miscellaneous = IDDMiscellaneous
-    xps = IDDXps
+    stages = BMCStages
+    scalers = BMCScalers
+    miscellaneous = BMCMiscellaneous
 
     _expert_pwd = "Pilatus2"
 
@@ -91,15 +64,11 @@ class IDDModel(StationModel):
         """Implements the stop_all method for 13ID-D"""
         caput_many(
             [
-                self.miscellaneous.mirror_stop.value[1],
                 self.miscellaneous.station_stop.value[1],
                 self.miscellaneous.xps_stop.value[1],
-                self.miscellaneous.mcs_stop.value[1],
             ],
-            [1, 1, 1, 1],
+            [1, 1],
         )
-
-    # TODO: Make inputs more specific.
     def prepare_for_scan(
         self, target_stage, scan: MapModel, expert: Optional[bool] = False
     ) -> bool:
@@ -125,7 +94,7 @@ class IDDModel(StationModel):
 
     def prepare_shutter(self):
         # Open shutter
-        caput(self.miscellaneous.table_shutter.value[1], 0)
+        caput(self.miscellaneous.table_shutter.value[1], 1)
         time.sleep(0.5)
 
     def prepare_for_auto_centering(
@@ -170,12 +139,7 @@ class IDDModel(StationModel):
         revert_position: Optional[bool] = True,
     ) -> None:
         # Close shutter
-        caput(self.miscellaneous.table_shutter.value[1], 1)
-
-        if not centering:
-            # Move photodiode out
-            caput(self.miscellaneous.photodiode.value[1], 1)
-            time.sleep(2)
+        caput(self.miscellaneous.table_shutter.value[1], 0)
 
         if revert_position:
             # Move stage back to position
@@ -189,14 +153,6 @@ class IDDModel(StationModel):
         :return: In case of errors it returns False.
         """
 
-        # Check 13ID-D mirrors
-        if not self._check_mirrors():
-            return False
-
-        # Check 13ID-D microscope
-        if not self._check_microscope():
-            return False
-
         # Check for stage limits based on map positions
         if not self._check_stage_limits(target_stage, scan.lines):
             return False
@@ -205,9 +161,6 @@ class IDDModel(StationModel):
 
     def check_beam_hutch_status(self) -> bool:
         """Implements the check_beam_status method for the 13-ID-D station."""
-        # Check hutch.
-        if caget(self.miscellaneous.hutch.value[1]) == 0:
-            return False
 
         # Check for beam.
         if caget(self.miscellaneous.current.value[1]) < 10:
@@ -216,44 +169,10 @@ class IDDModel(StationModel):
         return True
 
     def _check_mirrors(self) -> bool:
-        """
-        Checks if the mirrors are in the scanning position.
-        :return: In case of errors it returns False.
-        """
-        ds_position = round(caget(self.stages.mirror_ds.value[1]))
-        us_position = round(caget(self.stages.mirror_us.value[1]))
-
-        if not caget(self.stages.mirror_ds.value[1] + ".DMOV") == 1:
-            print("DS mirror is moving.")
-            return False
-        elif ds_position != -180:
-            print("DS mirror is not out.")
-            return False
-
-        if not caget(self.stages.mirror_us.value[1] + ".DMOV") == 1:
-            print("US mirror is moving.")
-            return False
-        elif us_position != -180:
-            print("US mirror is not out.")
-            return False
-
-        return True
+        pass
 
     def _check_microscope(self) -> bool:
-        """
-        Checks if the microscope is in the IN position.
-        :return: In case of errors it returns False.
-        """
-        microscope_position = round(caget(self.stages.microscope.value[1]))
-
-        if not caget(self.stages.microscope.value[1] + ".DMOV") == 1:
-            print("The microscope is moving.")
-            return False
-        elif microscope_position != -140:
-            print("The microscope is not out.")
-            return False
-
-        return True
+        pass
 
     def _move_to_position(self, target_stage, line: TrajectoryLine) -> None:
         """
@@ -265,13 +184,9 @@ class IDDModel(StationModel):
         # Move the stage to position
         caput(target_stage, float(line.trj_positions[0]), wait=True)
 
-        # Move the photodiode IN
-        caput(self.miscellaneous.photodiode.value[1], 0)
-        time.sleep(2)
-
     def auto_centering_positions(self, step: float):
         positions = []
-        starting_position = 0
+        starting_position = 90
 
         if step is not None:
             positions = [
@@ -284,7 +199,7 @@ class IDDModel(StationModel):
         return positions, starting_position
 
     def auto_centering_stages(self) -> (str, str):
-        scanning_stage = self.stages.sample_horizontal.value
+        scanning_stage = self.stages.sample_vertical.value
         rotation_stage = self.stages.sample_omega.value
 
         return scanning_stage, rotation_stage

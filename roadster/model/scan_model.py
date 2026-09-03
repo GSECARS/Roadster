@@ -10,7 +10,7 @@ class ScanModes(Enum):
     """Represents the available scanning modes."""
 
     step = "Step"
-    fly = "Fly"
+    # fly = "Fly"
 
 
 class ScanTypes(Enum):

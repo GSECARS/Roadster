@@ -39,13 +39,6 @@ class ScanningController(QObject):
         self._test_mode = False
         self._fly_scan_starting = False
 
-        # Create the xps connection instance
-        self.stage_xps = NewportXPS(
-            host=self.station.xps.host.value,
-            username=self.station.xps.username.value,
-            password=self.station.xps.password.value,
-        )
-        
         # Set combo box information
         self._populate_combo_boxes()
 
@@ -75,7 +68,7 @@ class ScanningController(QObject):
             self.scanning_view.cmb_scan_mode.addItem(item.value)
         
         # Set default scan mode to "Fly" (index 1: step=0, fly=1)
-        self.scanning_view.cmb_scan_mode.setCurrentIndex(1)
+        self.scanning_view.cmb_scan_mode.setCurrentIndex(0)
 
         # Scanning types.
         for item in self.scanning_model.scan_types:
@@ -90,7 +83,7 @@ class ScanningController(QObject):
             self.scanning_view.cmb_correction_scaler.addItem(item.value[0])
 
         # Set default scaler
-        self.scanning_view.cmb_scaler.setCurrentIndex(3)
+        self.scanning_view.cmb_scaler.setCurrentIndex(1)
         self.scanning_view.cmb_correction_scaler.setCurrentIndex(0)
 
     def _connect_plot_widgets(self):
@@ -359,15 +352,6 @@ class ScanningController(QObject):
             direction = -1 if caget(target_stage + ".DIR") == 1 else 1
             xps_direction = "backward" if direction == -1 else "foreward"
 
-            # Define xps trajectory
-            self.stage_xps.define_line_trajectories(
-                axis=xps_stage,
-                group=xps_group,
-                stop=scan_range,
-                step=step,
-                pixeltime=None,
-                scantime=scantime,
-            )
 
             # Set count type to oneshot
             caput(self.station.miscellaneous.pd_count_type.value[1], 0)
@@ -389,7 +373,6 @@ class ScanningController(QObject):
 
             # Start trajectory
             caput(self.model.options.station.miscellaneous.mcs_erase_start.value[1], 1)
-            self.stage_xps.run_trajectory(name=xps_direction, save=False, clean=True)
 
             data_array = caget(self.station.miscellaneous.mcs_channel.value[1])
 
@@ -493,34 +476,34 @@ class ScanningController(QObject):
         target_value = round(caget(self.station.stages.sample_omega.value[1]), 4)
 
         if save_type == "negative":
-            if target_value >= 0:
+            if target_value >= 90:
                 self.msg_prompt = PromptModel(
                     parent=self.scanning_view,
                     msg_title="Save error",
-                    msg_text=f"The target value must be < 0",
+                    msg_text=f"The target value must be < 90",
                 )
                 return None
             label = self.scanning_view.lbl_saved_negative_position
         elif save_type == "positive":
-            if target_value <= 0:
+            if target_value <= 90:
                 self.msg_prompt = PromptModel(
                     parent=self.scanning_view,
                     msg_title="Save error",
-                    msg_text=f"The target value must be > 0",
+                    msg_text=f"The target value must be > 90",
                 )
                 return None
             label = self.scanning_view.lbl_saved_positive_position
         else:
-            if target_value != 0:
+            if target_value != 90:
                 self.msg_prompt = PromptModel(
                     parent=self.scanning_view,
                     msg_title="Save error",
-                    msg_text=f"The target value must equals 0",
+                    msg_text=f"The target value must equals 90",
                 )
                 return None
             label = self.scanning_view.lbl_saved_central_position
 
-        position = round(caget(self.station.stages.sample_horizontal.value[1]), 4)
+        position = round(caget(self.station.stages.sample_vertical.value[1]), 4)
         omega_position = round(caget(self.station.stages.sample_omega.value[1]), 4)
         self.scanning_view.update_save_labels(
             position=position, omega_position=omega_position, label=label
@@ -573,8 +556,8 @@ class ScanningController(QObject):
         )
 
         if self.msg_prompt.response:
-            if round(caget(rotation_stage[1]), 4) != 0:
-                caput(rotation_stage[1], 0)
+            if round(caget(rotation_stage[1]), 4) != 90:
+                caput(rotation_stage[1], 90)
 
             caput(self.station.stages.sample_focus.value[1], value, wait=True)
             formatted_moved = self.scanning_view.plot._format_length_with_unit(focal_correction)
@@ -687,7 +670,7 @@ class ScanningController(QObject):
             # Priority 2: Fall back to EPICS path only if no file is manually loaded
             # Try to get directory from EPICS
             try:
-                epics_path = caget("13IDDLF1:cam1:FilePath.VAL", as_string=True)
+                epics_path = caget("13BMCLF1:cam1:FilePath.VAL", as_string=True)
                 if epics_path:
                     try:
                         target_directory = epics_path.split("\\")[4].strip()
@@ -772,7 +755,7 @@ class ScanningController(QObject):
             # Priority 2: Fall back to EPICS path only if no file is manually loaded
             # Try to get directory from EPICS
             try:
-                epics_path = caget("13IDDLF1:cam1:FilePath.VAL", as_string=True)
+                epics_path = caget("13BMCLF1:cam1:FilePath.VAL", as_string=True)
                 if epics_path:
                     try:
                         target_directory = epics_path.split("\\")[4].strip()
@@ -852,7 +835,7 @@ class ScanningController(QObject):
             # Set / Create directory
             target_directory = None
             try:
-                epics_path = caget("13IDDLF1:cam1:FilePath.VAL", as_string=True)
+                epics_path = caget("13BMCLF1:cam1:FilePath.VAL", as_string=True)
                 if epics_path:
                     try:
                         target_directory = epics_path.split("\\")[4].strip()
@@ -997,10 +980,7 @@ class ScanningController(QObject):
 
                     if scan_mode.lower() == "step":
 
-                        if scaler[1] == self.station.scalers.s9.value[1]:
-                            counter = self.station.miscellaneous.ketek_count.value[1]
-                        else:
-                            counter = self.station.miscellaneous.pd_count.value[1]
+                        counter = self.station.miscellaneous.pd_count.value[1]
                         
                         pinhole_scan_thread = threading.Thread(
                             target=self.step_scan,
@@ -1114,10 +1094,7 @@ class ScanningController(QObject):
 
                                 if scan_mode.lower() == "step":
 
-                                    if scaler[1] == self.station.scalers.s9.value[1]:
-                                        counter = self.station.miscellaneous.ketek_count.value[1]
-                                    else:
-                                        counter = self.station.miscellaneous.pd_count.value[1]
+                                    counter = self.station.miscellaneous.pd_count.value[1]
                                         
                                     pinhole_scan_thread = threading.Thread(
                                         target=self.step_scan,
@@ -1280,10 +1257,7 @@ class ScanningController(QObject):
 
                                     if scan_mode.lower() == "step":
 
-                                        if scaler[1] == self.station.scalers.s9.value[1]:
-                                            counter = self.station.miscellaneous.ketek_count.value[1]
-                                        else:
-                                            counter = self.station.miscellaneous.pd_count.value[1]
+                                        counter = self.station.miscellaneous.pd_count.value[1]
 
                                         centering_scan_thread = threading.Thread(
                                             target=self.step_scan,
@@ -1465,10 +1439,7 @@ class ScanningController(QObject):
 
                     if scan_mode.lower() == "step":
 
-                        if scaler[1] == self.station.scalers.s9.value[1]:
-                            counter = self.station.miscellaneous.ketek_count.value[1]
-                        else:
-                            counter = self.station.miscellaneous.pd_count.value[1]
+                        counter = self.station.miscellaneous.pd_count.value[1]
 
                         single_scan_thread = threading.Thread(
                             target=self.step_scan,
@@ -1550,16 +1521,15 @@ class ScanningController(QObject):
     ):
         sleep_time = exposure_time + 0.1
 
-        if scaler != self.station.scalers.s9.value[1]:
-            # Set count type to oneshot
-            caput(self.station.miscellaneous.pd_count_type.value[1], 0)
-            time.sleep(0.5)
+        # Set count type to oneshot
+        caput(self.station.miscellaneous.pd_count_type.value[1], 0)
+        time.sleep(0.5)
 
-            # Set scaler counter to done state
-            caput(self.station.miscellaneous.pd_count.value[1], 0)
+        # Set scaler counter to done state
+        caput(self.station.miscellaneous.pd_count.value[1], 0)
 
-            # Set exposure time.
-            caput(self.station.miscellaneous.pd_count_time.value[1], exposure_time)
+        # Set exposure time.
+        caput(self.station.miscellaneous.pd_count_time.value[1], exposure_time)
 
         caput(pd_count, 1)
         # Break sleep into smaller chunks to check abort status
@@ -1769,7 +1739,7 @@ class ScanningController(QObject):
         self.update_status(abort_status=False, running_status=False, label_text="Idle")
 
         # Set/Create directory
-        target_directory = caget("13IDDLF1:cam1:FilePath.VAL", as_string=True)
+        target_directory = caget("13BMCLF1:cam1:FilePath.VAL", as_string=True)
         target_directory = target_directory.split("\\")[4].strip()
         target_directory = os.path.join(self.station.base_dir, os.path.join(target_directory, "Absorption_Scans"))
 

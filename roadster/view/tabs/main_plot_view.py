@@ -782,7 +782,7 @@ class BasePlotWidget(QtWidgets.QWidget, QtCore.QObject):
         self.btn_next_file.setFixedWidth(35)
 
     def recalculate_center(self):
-        self._calculate_center(self._lower_line.pos(), self._upper_line.pos())
+        self._calculate_center(self._lower_line.pos().x(), self._upper_line.pos().x())
 
     # def change_color(self):
     #     # color = QtWidgets.QColorDialog.getColor()
