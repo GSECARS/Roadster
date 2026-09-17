@@ -44,6 +44,7 @@ class BMCMiscellaneous(Enum):
     pd_count_time = "Photodiode count time", "13BMC:scaler1.TP"
     pd_count_type = "Scaler count type", "13BMC:scaler1.CONT"
     current = "Ring current", "S:SRcurrentAI"
+    energy = "Energy", "13BMC:filter:EnergyLocal"
 
 
 # class IDDDirectories(Enum):
@@ -101,7 +102,7 @@ class BMCModel(StationModel):
         self, positions: List[float], expert: Optional[bool] = False
     ) -> bool:
         """
-        Implements the prepare_for_auto_centering method for 13ID-D.
+        Implements the prepare_for_auto_centering method.
         :param positions: A list with the starting position for each scan.
         :param expert: Expert mode bypasses limits and collision checks.
         :return: In case of errors it returns False.
@@ -110,14 +111,7 @@ class BMCModel(StationModel):
         object.__setattr__(self, "trj_aborted", False)
 
         if not expert:
-            # Check 13ID-D mirrors
-            if not self._check_mirrors():
-                return False
-
-            # Check 13ID-D microscope
-            if not self._check_microscope():
-                return False
-
+           
             # Check stage limits
             low_limit = caget(self.stages.sample_omega.value[1] + ".LLM")
             high_limit = caget(self.stages.sample_omega.value[1] + ".HLM")

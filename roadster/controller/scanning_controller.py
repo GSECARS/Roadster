@@ -83,7 +83,7 @@ class ScanningController(QObject):
             self.scanning_view.cmb_correction_scaler.addItem(item.value[0])
 
         # Set default scaler
-        self.scanning_view.cmb_scaler.setCurrentIndex(1)
+        self.scanning_view.cmb_scaler.setCurrentIndex(2)
         self.scanning_view.cmb_correction_scaler.setCurrentIndex(0)
 
     def _connect_plot_widgets(self):
@@ -161,7 +161,7 @@ class ScanningController(QObject):
         )
 
         self.scanning_view.btn_auto_centering.clicked.connect(
-            lambda: self.set_target_stage(self.station.stages.sample_horizontal.value)
+            lambda: self.set_target_stage(self.station.stages.sample_vertical.value)
         )
 
         self.scanning_view.btn_custom_scan.clicked.connect(
@@ -182,7 +182,7 @@ class ScanningController(QObject):
 
         self.scanning_view.btn_pinhole_auto.clicked.connect(
             lambda: self.scanning_procedure(
-                trj_range=0.04, step=0.002, exposure=0.1, scanning_type=ScanProc.Pinhole
+                trj_range=0.1, step=0.003, exposure=0.1, scanning_type=ScanProc.Pinhole
             )
         )
 
@@ -932,7 +932,7 @@ class ScanningController(QObject):
                 self.msg_prompt = PromptModel(
                     parent=self.scanning_view,
                     msg_title="Beam/Hutch",
-                    msg_text="The ID-D hutch is not searched or there is no beam in the ring.",
+                    msg_text="The hutch is not searched or there is no beam in the ring.",
                 )
                 self.update_status(
                     abort_status=False, running_status=False, label_text="Idle"
