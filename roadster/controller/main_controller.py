@@ -1,9 +1,11 @@
 import sys
 
-from qtpy import QtWidgets, QtCore
+from qtpy.QtWidgets import QApplication
+
+from roadster.controller.options_controller import OptionsController
+from roadster.controller.scanning_controller import ScanningController
 from roadster.model import MainModel
 from roadster.view import MainView
-from roadster.controller import OptionsController, ScanningController
 
 
 class MainController:
@@ -14,7 +16,7 @@ class MainController:
 
     def __init__(self) -> None:
         # Create core app, views and models.
-        self._app = QtWidgets.QApplication(sys.argv)
+        self._app = QApplication(sys.argv)
         self._model = MainModel()
         self._view = MainView()
 
@@ -25,10 +27,9 @@ class MainController:
         self.scanning.loaded_file_changed.connect(self._change_window_title)
         self._view.scanning.plot.new_file_saved.connect(self._change_window_title)
 
-    def run(self) -> None:
-        """Used to start the mainloop of the application."""
-
-        self._view.display_main_window()
+    def run(self, version: str) -> None:
+        """Used to start the application."""
+        self._view.display_main_window(version)
         sys.exit(self._app.exec())
 
     def _change_window_title(self, text: str) -> None:

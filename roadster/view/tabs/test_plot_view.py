@@ -154,6 +154,23 @@ class TestPlotWidget(QtWidgets.QWidget):
             labelOpts=label_options,
         )
 
+    @staticmethod
+    def _format_length_with_unit(value: float) -> str:
+        """
+        Formats a length value with appropriate unit.
+        If value < 1mm, displays in micrometers (um).
+        If value >= 1mm, displays in millimeters (mm).
+        """
+        abs_value = abs(value)
+        if abs_value < 1.0:
+            # Convert to micrometers
+            formatted_value = round(value * 1000, 4)
+            return f"{formatted_value} um"
+        else:
+            # Keep in millimeters
+            formatted_value = round(value, 4)
+            return f"{formatted_value} mm"
+
     def _configure_labels(self) -> None:
         # Set size
         self._coord_label.setFixedWidth(150)
@@ -402,7 +419,7 @@ class TestPlotWidget(QtWidgets.QWidget):
         )
         # Set the size label
         self._calculated_size_label.setText(
-            f"Size: {round(self._calculated_size, 4)} mm"
+            f"Size: {self._format_length_with_unit(self._calculated_size)}"
         )
 
         return center

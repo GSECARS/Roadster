@@ -13,6 +13,9 @@ class ScanningTab(QtWidgets.QWidget):
 
         # TODO: Change the plot widget.
         self.plot = BasePlotWidget()
+        
+        # Store raw focal correction value in mm (for motor commands)
+        self._focal_correction_mm = None
 
         # Expert mode widgets
         self.btn_expert_toggle = QtWidgets.QPushButton()
@@ -144,7 +147,10 @@ class ScanningTab(QtWidgets.QWidget):
     def _config_line_edit(self) -> None:
         """Configuration of the scanning tab line edit widgets."""
         # Set the font and size of the text.
-        font = QtGui.QFont("Consolas", 9)
+        # Use Qt's font system to find an available monospace font
+        font = QtGui.QFont()
+        font.setStyleHint(QtGui.QFont.Monospace)
+        font.setPointSize(9)
         self.lne_range.setFont(font)
         self.lne_step.setFont(font)
         self.lne_exposure.setFont(font)
@@ -185,13 +191,14 @@ class ScanningTab(QtWidgets.QWidget):
 
         # Set starting values
         self.lne_range.setText("0.1")
-        self.lne_step.setText("0.01")
+        self.lne_step.setText("0.003")
         self.lne_exposure.setText("0.1")
         self.lne_omega_rotation_range.setText("1")
 
     def _config_combo_boxes(self) -> None:
         """Configuration of the scanning tab combo box widgets."""
         # Set active item.
+        # Note: Scan mode default is set in controller's _populate_combo_boxes() after items are added
         self.cmb_scan_mode.setCurrentIndex(0)
         self.cmb_scan_type.setCurrentIndex(0)
         self.cmb_scaler.setCurrentIndex(0)
@@ -294,6 +301,9 @@ class ScanningTab(QtWidgets.QWidget):
 
         for label in labels:
             label.setText("None")
+        
+        # Reset the stored raw focal correction value
+        self._focal_correction_mm = None
 
     def calculate_focal_correction(self):
         ch = float(self.lbl_saved_central_position.text().split(",")[0].strip())
@@ -306,13 +316,18 @@ class ScanningTab(QtWidgets.QWidget):
 
         focal_correction = round(
             (
-                ((ch - ph) - (ch - nh))
+                ((ph - ch) - (nh - ch))
                 / (2 * math.sin(((po - no) / 2) * (math.pi / 180)))
             ),
             4,
         )
 
-        self.lbl_centering_correction.setText(str(focal_correction) + " mm")
+        # Store raw value in mm for motor commands
+        self._focal_correction_mm = focal_correction
+        
+        # Display with appropriate unit
+        formatted_correction = self.plot._format_length_with_unit(focal_correction)
+        self.lbl_centering_correction.setText(formatted_correction)
 
     def _layout_scanning(self) -> None:
 
@@ -471,9 +486,9 @@ class ScanningTab(QtWidgets.QWidget):
         layout_status.addWidget(self.check_test_mode, alignment=QtCore.Qt.AlignRight)
 
         # Main layout.
-        self.main_scanning_layout.addLayout(layout_setup_scan)
-        self.main_scanning_layout.addWidget(HLine())
         self.main_scanning_layout.addLayout(layout_step_scan_buttons)
+        self.main_scanning_layout.addWidget(HLine())
+        self.main_scanning_layout.addLayout(layout_setup_scan)
         self.main_scanning_layout.addWidget(HLine())
         self.main_scanning_layout.addLayout(layout_fly_scan_buttons)
         self.main_scanning_layout.addWidget(HLine())

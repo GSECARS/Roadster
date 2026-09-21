@@ -39,13 +39,6 @@ class ScanningController(QObject):
         self._test_mode = False
         self._fly_scan_starting = False
 
-        # Create the xps connection instance
-        self.stage_xps = NewportXPS(
-            host=self.station.xps.host.value,
-            username=self.station.xps.username.value,
-            password=self.station.xps.password.value,
-        )
-        
         # Set combo box information
         self._populate_combo_boxes()
 
@@ -63,12 +56,19 @@ class ScanningController(QObject):
         # Status
         self._trj_running = False
         self._aborted = False
+        
+        # Store scan state for abort recovery
+        self._scan_center = None
+        self._scan_target_stage = None
 
     def _populate_combo_boxes(self) -> None:
         """Adds the combo box items."""
         # Scanning modes.
         for item in self.scanning_model.scan_modes:
             self.scanning_view.cmb_scan_mode.addItem(item.value)
+        
+        # Set default scan mode to "Fly" (index 1: step=0, fly=1)
+        self.scanning_view.cmb_scan_mode.setCurrentIndex(0)
 
         # Scanning types.
         for item in self.scanning_model.scan_types:
@@ -83,7 +83,7 @@ class ScanningController(QObject):
             self.scanning_view.cmb_correction_scaler.addItem(item.value[0])
 
         # Set default scaler
-        self.scanning_view.cmb_scaler.setCurrentIndex(3)
+        self.scanning_view.cmb_scaler.setCurrentIndex(2)
         self.scanning_view.cmb_correction_scaler.setCurrentIndex(0)
 
     def _connect_plot_widgets(self):
@@ -114,6 +114,9 @@ class ScanningController(QObject):
         self.scanning_view.plot.btn_previous_file.clicked.connect(self.load_previous_file)
         self.scanning_view.plot.btn_next_file.clicked.connect(self.load_next_file)
         self.scan_running.connect(self.scanning_view.plot.toggle_plot_buttons)
+        
+        # Connect loaded file signal to update plot name for overlays
+        self.loaded_file_changed.connect(self.scanning_view.plot.update_plot_name)
 
     def _connect_scanning_control_widgets(self):
         """Connects the signals of the scanning control widgets."""
@@ -158,7 +161,7 @@ class ScanningController(QObject):
         )
 
         self.scanning_view.btn_auto_centering.clicked.connect(
-            lambda: self.set_target_stage(self.station.stages.sample_horizontal.value)
+            lambda: self.set_target_stage(self.station.stages.sample_vertical.value)
         )
 
         self.scanning_view.btn_custom_scan.clicked.connect(
@@ -179,7 +182,7 @@ class ScanningController(QObject):
 
         self.scanning_view.btn_pinhole_auto.clicked.connect(
             lambda: self.scanning_procedure(
-                trj_range=0.04, step=0.002, exposure=0.1, scanning_type=ScanProc.Pinhole
+                trj_range=0.1, step=0.003, exposure=0.1, scanning_type=ScanProc.Pinhole
             )
         )
 
@@ -295,20 +298,23 @@ class ScanningController(QObject):
                         self.scanning_view.plot.target_position_motor[1]
                     )
 
+                    move_distance = round(current_position - target_position, 4) * -1
+                    formatted_distance = self.scanning_view.plot._format_length_with_unit(move_distance)
                     self.msg_prompt = PromptModel(
                         parent=self.scanning_view,
                         msg_title="Move confirmation",
                         msg_text=f"The {motor_name} ({target_motor}) stage is going to move by "
-                        f"{round(current_position - target_position, 4) * -1} "
-                        f"mm. Do you want to continue?",
+                        f"{formatted_distance}. Do you want to continue?",
                         user_prompt=True,
                     )
 
                     if self.msg_prompt.response:
                         # Move within limits
                         caput(target_motor + ".VAL", target_position, wait=True)
+                        moved_value = round(current_position - target_position, 4) * -1
+                        formatted_moved = self.scanning_view.plot._format_length_with_unit(moved_value)
                         self.scanning_view.plot.moved_by_label.setText(
-                            f"Moved: {round(current_position - target_position, 4) * -1} mm"
+                            f"Moved: {formatted_moved}"
                         )
                         self.scanning_view.plot.update_delta_position()
                 else:
@@ -346,15 +352,6 @@ class ScanningController(QObject):
             direction = -1 if caget(target_stage + ".DIR") == 1 else 1
             xps_direction = "backward" if direction == -1 else "foreward"
 
-            # Define xps trajectory
-            self.stage_xps.define_line_trajectories(
-                axis=xps_stage,
-                group=xps_group,
-                stop=scan_range,
-                step=step,
-                pixeltime=None,
-                scantime=scantime,
-            )
 
             # Set count type to oneshot
             caput(self.station.miscellaneous.pd_count_type.value[1], 0)
@@ -376,7 +373,6 @@ class ScanningController(QObject):
 
             # Start trajectory
             caput(self.model.options.station.miscellaneous.mcs_erase_start.value[1], 1)
-            self.stage_xps.run_trajectory(name=xps_direction, save=False, clean=True)
 
             data_array = caget(self.station.miscellaneous.mcs_channel.value[1])
 
@@ -401,10 +397,18 @@ class ScanningController(QObject):
         time.sleep(3)
 
         # Add delay to start after the trajectory has began.
-        while self.station.trj_running:
+        while self.station.trj_running and not self.station.trj_aborted and not self.station.aborted:
 
             if self._fly_scan_starting:
-                time.sleep(scan.exposure_time / 2)
+                # Break sleep into smaller chunks to check abort status
+                sleep_time = scan.exposure_time / 2
+                elapsed = 0
+                while elapsed < sleep_time and not self.station.trj_aborted and not self.station.aborted:
+                    time.sleep(0.1)
+                    elapsed += 0.1
+
+                if self.station.trj_aborted or self.station.aborted:
+                    break
 
                 # Get fly data
                 data_array = caget(self.station.miscellaneous.mcs_channel.value[1])
@@ -414,29 +418,54 @@ class ScanningController(QObject):
                     y_list=data_array,
                     auto_scale=True,
                 )
-                time.sleep(scan.exposure_time / 2)
+                
+                # Break sleep into smaller chunks to check abort status
+                elapsed = 0
+                while elapsed < sleep_time and not self.station.trj_aborted and not self.station.aborted:
+                    time.sleep(0.1)
+                    elapsed += 0.1
 
         self._fly_scan_starting = False
 
-        if self.station.trj_aborted:
-            self._abort_scan()
+        # Note: fly_scan will call scan_finished at the end, which will restore station and reset status
+        # So we don't need to call _abort_scan() here
 
     def _abort_scan(self):
         print("Aborted Now")
 
-        self.station.aborted = True
+        # Check if a scan is actually running
+        scan_was_running = self.station.trj_running or (self._scan_target_stage is not None and self._scan_center is not None)
 
-        if self.station.trj_aborted:
-            # Set status to running and aborted
-            self.update_status(running_status=False, label_text="Idle")
-        else:
-            # Set status to running and aborted
-            self.update_status(
-                abort_status=True, running_status=False, label_text="Aborting..."
-            )
+        # Always set both abort flags when abort button is clicked
+        self.station.aborted = True
+        self.station.trj_aborted = True
+
+        # Set status to aborting
+        self.update_status(
+            abort_status=True, running_status=False, label_text="Aborting..."
+        )
 
         # Station stop
         self.station.stop_all()
+        
+        # Restore station if scan was started (shutter opened, motor moved)
+        # This handles the case where abort is clicked before scan thread starts
+        if self._scan_target_stage is not None and self._scan_center is not None:
+            self.station.restore_station(
+                target_stage=self._scan_target_stage,
+                center=self._scan_center,
+                centering=False,
+                revert_position=True,
+            )
+            # Clear stored values
+            self._scan_target_stage = None
+            self._scan_center = None
+        
+        # If no scan was running, reset status back to Idle immediately
+        if not scan_was_running:
+            self.update_status(
+                abort_status=False, running_status=False, label_text="Idle"
+            )
 
     def _update_status_label(self, text: str, color: str):
         self.scanning_view.lbl_scanning_status.setText(text)
@@ -447,34 +476,34 @@ class ScanningController(QObject):
         target_value = round(caget(self.station.stages.sample_omega.value[1]), 4)
 
         if save_type == "negative":
-            if target_value >= 0:
+            if target_value >= 90:
                 self.msg_prompt = PromptModel(
                     parent=self.scanning_view,
                     msg_title="Save error",
-                    msg_text=f"The target value must be < 0",
+                    msg_text=f"The target value must be < 90",
                 )
                 return None
             label = self.scanning_view.lbl_saved_negative_position
         elif save_type == "positive":
-            if target_value <= 0:
+            if target_value <= 90:
                 self.msg_prompt = PromptModel(
                     parent=self.scanning_view,
                     msg_title="Save error",
-                    msg_text=f"The target value must be > 0",
+                    msg_text=f"The target value must be > 90",
                 )
                 return None
             label = self.scanning_view.lbl_saved_positive_position
         else:
-            if target_value != 0:
+            if target_value != 90:
                 self.msg_prompt = PromptModel(
                     parent=self.scanning_view,
                     msg_title="Save error",
-                    msg_text=f"The target value must equals 0",
+                    msg_text=f"The target value must equals 90",
                 )
                 return None
             label = self.scanning_view.lbl_saved_central_position
 
-        position = round(caget(self.station.stages.sample_horizontal.value[1]), 4)
+        position = round(caget(self.station.stages.sample_vertical.value[1]), 4)
         omega_position = round(caget(self.station.stages.sample_omega.value[1]), 4)
         self.scanning_view.update_save_labels(
             position=position, omega_position=omega_position, label=label
@@ -485,8 +514,8 @@ class ScanningController(QObject):
         _, rotation_stage = self.station.auto_centering_stages()
 
         if (
-            self.scanning_view.lbl_centering_correction.text().split()[0].strip()
-            == "None"
+            self.scanning_view._focal_correction_mm is None
+            or self.scanning_view.lbl_centering_correction.text() == "None"
         ):
             self.msg_prompt = PromptModel(
                 parent=self.scanning_view,
@@ -502,11 +531,10 @@ class ScanningController(QObject):
             )
             return None
 
-        focal_correction = float(
-            self.scanning_view.lbl_centering_correction.text().split()[0].strip()
-        )
+        # Get the raw focal correction value in mm (not from display label)
+        focal_correction = self.scanning_view._focal_correction_mm
 
-        value = focal_correction + caget(self.station.stages.sample_focus.value[1])
+        value = caget(self.station.stages.sample_focus.value[1]) - focal_correction
         high_limit = caget(self.station.stages.sample_focus.value[1] + ".HLM")
         low_limit = caget(self.station.stages.sample_focus.value[1] + ".LLM")
 
@@ -518,89 +546,164 @@ class ScanningController(QObject):
             )
             return None
 
+        formatted_correction = self.scanning_view.plot._format_length_with_unit(focal_correction)
         self.msg_prompt = PromptModel(
             parent=self.scanning_view,
             msg_title="Move confirmation",
-            msg_text=f"The Focus stage will be corrected by {focal_correction} mm and {rotation_stage[0]} "
+            msg_text=f"The Focus stage will be corrected by {formatted_correction} and {rotation_stage[0]} "
             f"({rotation_stage[1]}) will return to the central position. Do you want to continue?",
             user_prompt=True,
         )
 
         if self.msg_prompt.response:
-            if round(caget(rotation_stage[1]), 4) != 0:
-                caput(rotation_stage[1], 0)
+            if round(caget(rotation_stage[1]), 4) != 90:
+                caput(rotation_stage[1], 90)
 
             caput(self.station.stages.sample_focus.value[1], value, wait=True)
+            formatted_moved = self.scanning_view.plot._format_length_with_unit(focal_correction)
             self.scanning_view.plot.moved_by_label.setText(
-                f"Moved: {focal_correction} mm"
+                f"Moved: {formatted_moved}"
             )
             self.scanning_view.lbl_centering_correction.setText("Applied")
 
     @staticmethod
-    def _get_file(directory: str, oldest: Optional[bool] = False) -> str:
-        files = os.listdir(directory)
-        full_paths = []
+    def _get_file(directory: str, oldest: Optional[bool] = False) -> Optional[str]:
+        if not os.path.exists(directory) or not os.path.isdir(directory):
+            return None
+        
+        try:
+            files = os.listdir(directory)
+            if not files:
+                return None
+                
+            full_paths = []
+            [full_paths.append(os.path.join(directory, file)) for file in files if os.path.isfile(os.path.join(directory, file))]
 
-        [full_paths.append(os.path.join(directory, file)) for file in files]
+            if not full_paths:
+                return None
 
-        if oldest:
-            target_file = min(full_paths, key=os.path.getctime)
-        else:
-            target_file = max(full_paths, key=os.path.getctime)
+            if oldest:
+                target_file = min(full_paths, key=os.path.getctime)
+            else:
+                target_file = max(full_paths, key=os.path.getctime)
 
-        return target_file
+            return str(target_file)
+        except (OSError, PermissionError) as e:
+            return None
 
-    def _get_relative_file(self, directory: str, next_file: Optional[bool] = False) -> str:
-        relative_file: str = ""
+    def _get_relative_file(self, directory: str, next_file: Optional[bool] = False) -> Optional[str]:
+        if not os.path.exists(directory) or not os.path.isdir(directory):
+            return None
+            
+        relative_file: Optional[str] = None
+        
         # Account for nothing loaded
-        if not self._loaded_file:
-            self._loaded_file = self._get_file(directory=directory)
+        if not self._loaded_file or not os.path.exists(self._loaded_file):
+            target_file = self._get_file(directory=directory)
+            if target_file:
+                self._loaded_file = target_file
+            else:
+                return None
+        
+        if not os.path.exists(self._loaded_file):
+            return None
+            
         loaded_file_creation_time = os.path.getctime(self._loaded_file)
 
-        files = []
+        try:
+            files = []
+            
+            if next_file:
+                latest_file = self._get_file(directory=directory)
+                if latest_file and latest_file == self._loaded_file:
+                    relative_file = self._loaded_file
+                else:
+                    for file in os.listdir(directory):
+                        filepath = os.path.join(directory, file)
+                        if not os.path.isfile(filepath):
+                            continue
+                        file_creation_time = os.path.getctime(filepath)
 
-        if next_file:
-            if self._get_file(directory=directory) == self._loaded_file:
-                relative_file = self._loaded_file
+                        if relative_file is None:
+                            relative_file = filepath
+
+                        if loaded_file_creation_time < file_creation_time:
+                            files.append(filepath)
+
+                    if files:
+                        relative_file = min(files, key=os.path.getctime)
+                    else:
+                        relative_file = self._loaded_file
             else:
-                for file in os.listdir(directory):
-                    filepath = os.path.join(directory, file)
-                    file_creation_time = os.path.getctime(filepath)
+                oldest_file = self._get_file(directory=directory, oldest=True)
+                if oldest_file and oldest_file == self._loaded_file:
+                    relative_file = self._loaded_file
+                else:
+                    for file in os.listdir(directory):
+                        filepath = os.path.join(directory, file)
+                        if not os.path.isfile(filepath):
+                            continue
+                        file_creation_time = os.path.getctime(filepath)
 
-                    if relative_file is None:
-                        relative_file = filepath
+                        if relative_file is None:
+                            relative_file = filepath
 
-                    if loaded_file_creation_time < file_creation_time:
-                        files.append(filepath)
+                        if loaded_file_creation_time > file_creation_time:
+                            files.append(filepath)
 
-                relative_file = min(files, key=os.path.getctime)
-        else:
-            if self._get_file(directory=directory, oldest=True) == self._loaded_file:
-                relative_file = self._loaded_file
-            else:
-                for file in os.listdir(directory):
-                    filepath = os.path.join(directory, file)
-                    file_creation_time = os.path.getctime(filepath)
+                    if files:
+                        relative_file = max(files, key=os.path.getctime)
+                    else:
+                        relative_file = self._loaded_file
 
-                    if relative_file is None:
-                        relative_file = filepath
-
-                    if loaded_file_creation_time > file_creation_time:
-                        files.append(filepath)
-
-                relative_file = max(files, key=os.path.getctime)
-
-        return relative_file
+            return relative_file
+        except (OSError, PermissionError):
+            return None
 
     def load_next_file(self):
-        # Set / Create directory
-        target_directory = caget("13IDDLF1:cam1:FilePath.VAL", as_string=True)
-        target_directory = target_directory.split("\\")[4].strip()
-        target_directory = (
-                self.station.base_dir + f"/{target_directory}" + "/Absorption_Scans/"
-        )
+        target_directory = None
+        
+        # Priority 1: If a file is manually loaded, always use its directory as the base
+        if self._loaded_file and os.path.exists(self._loaded_file):
+            target_directory = os.path.dirname(self._loaded_file)
+        else:
+            # Priority 2: Fall back to EPICS path only if no file is manually loaded
+            # Try to get directory from EPICS
+            try:
+                epics_path = caget("13BMCLF1:cam1:FilePath.VAL", as_string=True)
+                if epics_path:
+                    try:
+                        target_directory = epics_path.split("\\")[4].strip()
+                        target_directory = (
+                            self.station.base_dir + f"/{target_directory}" + "/Absorption_Scans/"
+                        )
+                    except (IndexError, AttributeError):
+                        # EPICS path format is unexpected, try to use it directly or construct differently
+                        target_directory = None
+            except Exception:
+                # EPICS connection failed, target_directory remains None
+                pass
+        
+        # Check if directory exists
+        if not target_directory:
+            QtWidgets.QMessageBox.information(
+                None, "No Folder Selected", "Unable to determine folder path from EPICS. Please load a file manually first."
+            )
+            return
+            
+        if not os.path.exists(target_directory) or not os.path.isdir(target_directory):
+            QtWidgets.QMessageBox.information(
+                None, "Folder Not Found", f"Folder does not exist: {target_directory}\nPlease load a file manually first."
+            )
+            return
 
         filename = self._get_relative_file(directory=target_directory, next_file=True)
+        if not filename:
+            QtWidgets.QMessageBox.information(
+                None, "No More Files", "No more files found in this directory."
+            )
+            return
+            
         self._loaded_file = filename
         self.loaded_file_changed.emit(self._loaded_file)
 
@@ -643,14 +746,49 @@ class ScanningController(QObject):
         self.scanning_view.plot.rescale_plot()
 
     def load_previous_file(self):
-        # Set / Create directory
-        target_directory = caget("13IDDLF1:cam1:FilePath.VAL", as_string=True)
-        target_directory = target_directory.split("\\")[4].strip()
-        target_directory = (
-                self.station.base_dir + f"/{target_directory}" + "/Absorption_Scans/"
-        )
+        target_directory = None
+        
+        # Priority 1: If a file is manually loaded, always use its directory as the base
+        if self._loaded_file and os.path.exists(self._loaded_file):
+            target_directory = os.path.dirname(self._loaded_file)
+        else:
+            # Priority 2: Fall back to EPICS path only if no file is manually loaded
+            # Try to get directory from EPICS
+            try:
+                epics_path = caget("13BMCLF1:cam1:FilePath.VAL", as_string=True)
+                if epics_path:
+                    try:
+                        target_directory = epics_path.split("\\")[4].strip()
+                        target_directory = (
+                            self.station.base_dir + f"/{target_directory}" + "/Absorption_Scans/"
+                        )
+                    except (IndexError, AttributeError):
+                        # EPICS path format is unexpected, try to use it directly or construct differently
+                        target_directory = None
+            except Exception:
+                # EPICS connection failed, target_directory remains None
+                pass
+        
+        # Check if directory exists
+        if not target_directory:
+            QtWidgets.QMessageBox.information(
+                None, "No Folder Selected", "Unable to determine folder path from EPICS. Please load a file manually first."
+            )
+            return
+            
+        if not os.path.exists(target_directory) or not os.path.isdir(target_directory):
+            QtWidgets.QMessageBox.information(
+                None, "Folder Not Found", f"Folder does not exist: {target_directory}\nPlease load a file manually first."
+            )
+            return
 
         filename = self._get_relative_file(directory=target_directory)
+        if not filename:
+            QtWidgets.QMessageBox.information(
+                None, "No More Files", "No more files found in this directory."
+            )
+            return
+            
         self._loaded_file = filename
         self.loaded_file_changed.emit(self._loaded_file)
 
@@ -695,11 +833,24 @@ class ScanningController(QObject):
     def load_from_file(self):
         if not self._trj_running:
             # Set / Create directory
-            target_directory = caget("13IDDLF1:cam1:FilePath.VAL", as_string=True)
-            target_directory = target_directory.split("\\")[4].strip()
-            target_directory = (
-                    self.station.base_dir + f"/{target_directory}" + "/Absorption_Scans/"
-            )
+            target_directory = None
+            try:
+                epics_path = caget("13BMCLF1:cam1:FilePath.VAL", as_string=True)
+                if epics_path:
+                    try:
+                        target_directory = epics_path.split("\\")[4].strip()
+                        target_directory = (
+                            self.station.base_dir + f"/{target_directory}" + "/Absorption_Scans/"
+                        )
+                    except (IndexError, AttributeError):
+                        # EPICS path format is unexpected, use base directory as fallback
+                        target_directory = self.station.base_dir
+            except Exception:
+                # EPICS connection failed, use base directory as fallback
+                target_directory = self.station.base_dir
+            
+            if not target_directory:
+                target_directory = self.station.base_dir
 
             dialog = QtWidgets.QFileDialog()
             dialog.setFileMode(QtWidgets.QFileDialog.ExistingFile)
@@ -708,6 +859,9 @@ class ScanningController(QObject):
                 dialog, "Open file", target_directory, "CSV Files (*.csv)"
             )
 
+            if not filename[0]:  # User cancelled file dialog
+                return
+                
             self._loaded_file = filename[0]
             self.loaded_file_changed.emit(self._loaded_file)
 
@@ -778,7 +932,7 @@ class ScanningController(QObject):
                 self.msg_prompt = PromptModel(
                     parent=self.scanning_view,
                     msg_title="Beam/Hutch",
-                    msg_text="The ID-D hutch is not searched or there is no beam in the ring.",
+                    msg_text="The hutch is not searched or there is no beam in the ring.",
                 )
                 self.update_status(
                     abort_status=False, running_status=False, label_text="Idle"
@@ -797,6 +951,10 @@ class ScanningController(QObject):
         scaler, correction_scaler = self.get_scalers()
 
         center = caget(target_stage)
+        
+        # Store scan state for abort recovery
+        self._scan_target_stage = target_stage
+        self._scan_center = center
 
         scan = self.scanning_model.create_scan(
             trj_range=trj_range, step=step, exposure=exposure, center=center
@@ -821,13 +979,14 @@ class ScanningController(QObject):
                     scan_range = scan.lines[0].trj_range * 2
 
                     if scan_mode.lower() == "step":
+
+                        counter = self.station.miscellaneous.pd_count.value[1]
+                        
                         pinhole_scan_thread = threading.Thread(
                             target=self.step_scan,
                             kwargs={
                                 "target_stage": target_stage,
-                                "pd_count": self.station.miscellaneous.pd_count.value[
-                                    1
-                                ],
+                                "pd_count": counter,
                                 "scaler": scaler,
                                 "exposure_time": exposure,
                                 "positions": scan.lines[0].trj_positions,
@@ -875,7 +1034,7 @@ class ScanningController(QObject):
                         )
                         read_data_thread.start()
 
-                    while self.station.trj_running:
+                    while self.station.trj_running and not self.station.trj_aborted and not self.station.aborted:
                         QtWidgets.QApplication.processEvents()
 
                     time.sleep(0.1)
@@ -896,113 +1055,133 @@ class ScanningController(QObject):
 
                         time.sleep(0.1)
 
-                        # Switch to vertical scan
-                        self.set_target_stage(
-                            self.station.stages.pinhole_vertical.value
-                        )
-                        target_stage = self.get_target_stage()
-                        center = caget(target_stage)
+                        # Check abort before starting second scan
+                        if not self.station.trj_aborted and not self.station.aborted:
+                            # Switch to vertical scan
+                            self.set_target_stage(
+                                self.station.stages.pinhole_vertical.value
+                            )
+                            target_stage = self.get_target_stage()
+                            center = caget(target_stage)
+                            
+                            # Update stored scan state for second scan
+                            self._scan_target_stage = target_stage
+                            self._scan_center = center
 
-                        scan = self.scanning_model.create_scan(
-                            trj_range=trj_range,
-                            step=step,
-                            exposure=exposure,
-                            center=center,
-                        )
-
-                        if self.station.prepare_for_scan(
-                            target_stage=target_stage,
-                            scan=scan,
-                            expert=self.station.expert_mode,
-                        ):
-
-                            # Clear plot
-                            self.scanning_view.plot.reset_plot()
-                            QtWidgets.QApplication.processEvents()
-
-                            # Set status
-                            self.update_status(
-                                running_status=True, label_text="Scanning..."
+                            scan = self.scanning_model.create_scan(
+                                trj_range=trj_range,
+                                step=step,
+                                exposure=exposure,
+                                center=center,
                             )
 
-                            scan_range = scan.lines[0].trj_range * 2
+                            if self.station.prepare_for_scan(
+                                target_stage=target_stage,
+                                scan=scan,
+                                expert=self.station.expert_mode,
+                            ):
 
-                            if scan_mode.lower() == "step":
-                                pinhole_scan_thread = threading.Thread(
-                                    target=self.step_scan,
-                                    kwargs={
-                                        "target_stage": target_stage,
-                                        "pd_count": self.station.miscellaneous.pd_count.value[
-                                            1
-                                        ],
-                                        "scaler": scaler,
-                                        "exposure_time": exposure,
-                                        "positions": scan.lines[0].trj_positions,
-                                        "center": center,
-                                        "centering": centering,
-                                        "revert_position": revert_position,
-                                        "scan_mode": scan_mode,
-                                        "energy": energy,
-                                        "current": current,
-                                        "scan": scan,
-                                        "correction_scaler": correction_scaler,
-                                    },
+                                # Clear plot
+                                self.scanning_view.plot.reset_plot()
+                                QtWidgets.QApplication.processEvents()
+
+                                # Set status
+                                self.update_status(
+                                    running_status=True, label_text="Scanning..."
                                 )
 
-                                self.station.prepare_shutter()
+                                scan_range = scan.lines[0].trj_range * 2
 
+                                if scan_mode.lower() == "step":
+
+                                    counter = self.station.miscellaneous.pd_count.value[1]
+                                        
+                                    pinhole_scan_thread = threading.Thread(
+                                        target=self.step_scan,
+                                        kwargs={
+                                            "target_stage": target_stage,
+                                            "pd_count": counter,
+                                            "scaler": scaler,
+                                            "exposure_time": exposure,
+                                            "positions": scan.lines[0].trj_positions,
+                                            "center": center,
+                                            "centering": centering,
+                                            "revert_position": revert_position,
+                                            "scan_mode": scan_mode,
+                                            "energy": energy,
+                                            "current": current,
+                                            "scan": scan,
+                                            "correction_scaler": correction_scaler,
+                                        },
+                                    )
+
+                                    self.station.prepare_shutter()
+
+                                else:
+                                    xps_stage, xps_group = self.get_xps_stage_and_group()
+                                    scantime = scan.exposure_time * (scan.points - 1)
+
+                                    pinhole_scan_thread = threading.Thread(
+                                        target=self.fly_scan,
+                                        kwargs={
+                                            "xps_stage": xps_stage,
+                                            "xps_group": xps_group,
+                                            "scan_range": scan_range,
+                                            "scantime": scantime,
+                                            "step": step,
+                                            "scan": scan,
+                                            "target_stage": target_stage,
+                                            "center": center,
+                                            "centering": centering,
+                                            "revert_position": revert_position,
+                                            "scan_mode": scan_mode,
+                                            "energy": energy,
+                                            "current": current,
+                                        },
+                                    )
+
+                                pinhole_scan_thread.start()
+
+                                if scan_mode.lower() != "step":
+                                    read_data_thread = threading.Thread(
+                                        target=self.read_fly_data, kwargs={"scan": scan}
+                                    )
+                                    read_data_thread.start()
+
+                                while self.station.trj_running and not self.station.trj_aborted and not self.station.aborted:
+                                    QtWidgets.QApplication.processEvents()
+
+                                time.sleep(0.1)
+
+                                if not self.station.trj_aborted and not self.station.aborted:
+                                    # Find peak and move horizontal
+                                    # peak = self.scanning_view.plot.find_peak()
+                                    peak = self.scanning_view.plot.fit(center=center, sigma=scan_range)
+
+                                    # Center
+                                    # center_position = (
+                                    #     self.scanning_view.plot.center_plot()
+                                    # )
+                                    time.sleep(0.1)
+                                    QtWidgets.QApplication.processEvents()
+                                    self._delta_position_changed.emit(center)
+                                    caput(target_stage, round(peak, 4), wait=True)
+
+                                    time.sleep(0.1)
                             else:
-                                xps_stage, xps_group = self.get_xps_stage_and_group()
-                                scantime = scan.exposure_time * (scan.points - 1)
-
-                                pinhole_scan_thread = threading.Thread(
-                                    target=self.fly_scan,
-                                    kwargs={
-                                        "xps_stage": xps_stage,
-                                        "xps_group": xps_group,
-                                        "scan_range": scan_range,
-                                        "scantime": scantime,
-                                        "step": step,
-                                        "scan": scan,
-                                        "target_stage": target_stage,
-                                        "center": center,
-                                        "centering": centering,
-                                        "revert_position": revert_position,
-                                        "scan_mode": scan_mode,
-                                        "energy": energy,
-                                        "current": current,
-                                    },
+                                # Clear stored values since prepare_for_scan failed for second scan
+                                self._scan_target_stage = None
+                                self._scan_center = None
+                                self.msg_prompt = PromptModel(
+                                    parent=self.scanning_view,
+                                    msg_title="Collisions Errors - Stage Limits",
+                                    msg_text="Please make sure to remove the mirrors and/or microscope.\n"
+                                    "Make sure the scan range doesn't exceed the stage's limits.",
                                 )
-
-                            pinhole_scan_thread.start()
-
-                            if scan_mode.lower() != "step":
-                                read_data_thread = threading.Thread(
-                                    target=self.read_fly_data, kwargs={"scan": scan}
-                                )
-                                read_data_thread.start()
-
-                            while self.station.trj_running:
-                                QtWidgets.QApplication.processEvents()
-
-                            time.sleep(0.1)
-
-                            if not self.station.trj_aborted and not self.station.aborted:
-                                # Find peak and move horizontal
-                                # peak = self.scanning_view.plot.find_peak()
-                                peak = self.scanning_view.plot.fit(center=center, sigma=scan_range)
-
-                                # Center
-                                # center_position = (
-                                #     self.scanning_view.plot.center_plot()
-                                # )
-                                time.sleep(0.1)
-                                QtWidgets.QApplication.processEvents()
-                                self._delta_position_changed.emit(center)
-                                caput(target_stage, round(peak, 4), wait=True)
-
-                                time.sleep(0.1)
             else:
+                # Clear stored values since prepare_for_scan failed
+                self._scan_target_stage = None
+                self._scan_center = None
                 self.msg_prompt = PromptModel(
                     parent=self.scanning_view,
                     msg_title="Collisions Errors - Stage Limits",
@@ -1077,13 +1256,14 @@ class ScanningController(QObject):
                                     )
 
                                     if scan_mode.lower() == "step":
+
+                                        counter = self.station.miscellaneous.pd_count.value[1]
+
                                         centering_scan_thread = threading.Thread(
                                             target=self.step_scan,
                                             kwargs={
                                                 "target_stage": target_stage,
-                                                "pd_count": self.station.miscellaneous.pd_count.value[
-                                                    1
-                                                ],
+                                                "pd_count": counter,
                                                 "scaler": scaler,
                                                 "exposure_time": exposure,
                                                 "positions": scan.lines[
@@ -1140,7 +1320,7 @@ class ScanningController(QObject):
                                         )
                                         read_data_thread.start()
 
-                                    while self.station.trj_running:
+                                    while self.station.trj_running and not self.station.trj_aborted and not self.station.aborted:
                                         QtWidgets.QApplication.processEvents()
 
                                     if not self.station.trj_aborted and not self.station.aborted:
@@ -1176,9 +1356,22 @@ class ScanningController(QObject):
                                         caput(rotation_stage[1], position, wait=True)
 
                                         # Add some delay to display the center position
-                                        time.sleep(3)
+                                        # Check abort during delay
+                                        elapsed = 0
+                                        while elapsed < 3 and not self.station.trj_aborted and not self.station.aborted:
+                                            time.sleep(0.1)
+                                            elapsed += 0.1
+                                            QtWidgets.QApplication.processEvents()
+
+                                        # Check abort before continuing to next scan
+                                        if self.station.trj_aborted or self.station.aborted:
+                                            break
 
                                         center = caget(target_stage)
+                                        
+                                        # Update stored scan state for next scan
+                                        self._scan_target_stage = target_stage
+                                        self._scan_center = center
 
                                         scan = self.scanning_model.create_scan(
                                             trj_range=trj_range,
@@ -1191,10 +1384,26 @@ class ScanningController(QObject):
                                             # Clear plot
                                             self.scanning_view.plot.reset_plot()
 
-                    if self.station.trj_aborted and not self.station.aborted:
+                    # Handle abort - restore station and move rotation stage back
+                    if self.station.trj_aborted or self.station.aborted:
+                        # Restore station (close shutter, move motor back)
+                        if self._scan_target_stage is not None and self._scan_center is not None:
+                            self.station.restore_station(
+                                target_stage=self._scan_target_stage,
+                                center=self._scan_center,
+                                centering=False,
+                                revert_position=True,
+                            )
+                            # Clear stored values
+                            self._scan_target_stage = None
+                            self._scan_center = None
+                        # Move rotation stage back to starting position
                         caput(rotation_stage[1], starting_position, wait=True)
 
                 else:
+                    # Clear stored values since prepare_for_scan failed
+                    self._scan_target_stage = None
+                    self._scan_center = None
                     self.msg_prompt = PromptModel(
                         parent=self.scanning_view,
                         msg_title="Collisions Errors - Stage Limits",
@@ -1202,6 +1411,9 @@ class ScanningController(QObject):
                         "Make sure the scan range doesn't exceed the stage's limits.",
                     )
             else:
+                # Clear stored values since prepare_for_auto_centering failed
+                self._scan_target_stage = None
+                self._scan_center = None
                 self.msg_prompt = PromptModel(
                     parent=self.scanning_view,
                     msg_title="Collisions Errors - Stage Limits",
@@ -1226,13 +1438,14 @@ class ScanningController(QObject):
                     self.update_status(running_status=True, label_text="Scanning...")
 
                     if scan_mode.lower() == "step":
+
+                        counter = self.station.miscellaneous.pd_count.value[1]
+
                         single_scan_thread = threading.Thread(
                             target=self.step_scan,
                             kwargs={
                                 "target_stage": target_stage,
-                                "pd_count": self.station.miscellaneous.pd_count.value[
-                                    1
-                                ],
+                                "pd_count": counter,
                                 "scaler": scaler,
                                 "exposure_time": exposure,
                                 "positions": scan.lines[0].trj_positions,
@@ -1280,6 +1493,9 @@ class ScanningController(QObject):
                         )
                         read_data_thread.start()
             else:
+                # Clear stored values since prepare_for_scan failed
+                self._scan_target_stage = None
+                self._scan_center = None
                 self.msg_prompt = PromptModel(
                     parent=self.scanning_view,
                     msg_title="Collisions Errors - Stage Limits",
@@ -1315,9 +1531,33 @@ class ScanningController(QObject):
         # Set exposure time.
         caput(self.station.miscellaneous.pd_count_time.value[1], exposure_time)
 
-        # Count the first step
         caput(pd_count, 1)
-        time.sleep(sleep_time)
+        # Break sleep into smaller chunks to check abort status
+        elapsed = 0
+        while elapsed < sleep_time and not self.station.trj_aborted and not self.station.aborted:
+            time.sleep(0.1)
+            elapsed += 0.1
+
+        if self.station.trj_aborted or self.station.aborted:
+            # Still need to call scan_finished to restore station and reset status
+            if correction_scaler is not None:
+                raw_data = self.raw_data
+            else:
+                raw_data = []
+            self.scan_finished(
+                target_stage=target_stage,
+                center=center,
+                centering=centering,
+                revert_position=revert_position,
+                scan=scan,
+                scan_mode=scan_mode,
+                energy=energy,
+                current=current,
+                scaler=scaler,
+                correction_scaler=correction_scaler,
+                raw_data=raw_data,
+            )
+            return
 
         # Read counts
         counts = caget(scaler[1])
@@ -1340,7 +1580,14 @@ class ScanningController(QObject):
 
                 # Count
                 caput(pd_count, 1)
-                time.sleep(sleep_time)
+                # Break sleep into smaller chunks to check abort status
+                elapsed = 0
+                while elapsed < sleep_time and not self.station.trj_aborted and not self.station.aborted:
+                    time.sleep(0.1)
+                    elapsed += 0.1
+
+                if self.station.trj_aborted or self.station.aborted:
+                    break
 
                 # Read counts
                 counts = caget(scaler[1])
@@ -1483,12 +1730,16 @@ class ScanningController(QObject):
             centering=centering,
             revert_position=revert_position,
         )
+        
+        # Clear stored scan state
+        self._scan_target_stage = None
+        self._scan_center = None
 
         # Set status
         self.update_status(abort_status=False, running_status=False, label_text="Idle")
 
         # Set/Create directory
-        target_directory = caget("13IDDLF1:cam1:FilePath.VAL", as_string=True)
+        target_directory = caget("13BMCLF1:cam1:FilePath.VAL", as_string=True)
         target_directory = target_directory.split("\\")[4].strip()
         target_directory = os.path.join(self.station.base_dir, os.path.join(target_directory, "Absorption_Scans"))
 

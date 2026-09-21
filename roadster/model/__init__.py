@@ -9,6 +9,7 @@ from roadster.model.scan_model import (
 )
 from roadster.model.options_model import OptionsModel
 from roadster.model.prompt_model import PromptModel
+from roadster.model.overlay_model import OverlayModel
 
 from roadster.model.path_model import qss_path, icon_path
 
