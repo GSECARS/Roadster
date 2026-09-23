@@ -389,7 +389,7 @@ class ScanningController(QObject):
 
             # Start trajectory
             caput(self.model.options.station.miscellaneous.mcs_erase_start.value[1], 1)
-            self.stage_xps.run_trajectory(name=xps_direction, save=False, clean=True)
+            self.stage_xps.run_trajectory(name=xps_direction, save=False, clean=True, move_to_start=False)
 
             data_array = caget(self.station.miscellaneous.mcs_channel.value[1])
 
