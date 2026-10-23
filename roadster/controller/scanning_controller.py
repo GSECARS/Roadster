@@ -25,6 +25,10 @@ class ScanningController(QObject):
 
     _delta_position_changed: Signal = Signal(float)
 
+    _plot_update_signal: Signal = Signal(object, object)
+    _plot_array_signal: Signal = Signal(object, object)
+    _status_signal: Signal = Signal(str, str)
+
     def __init__(self, model: MainModel, view: MainView):
         super(ScanningController, self).__init__()
         self.model = model
@@ -55,6 +59,7 @@ class ScanningController(QObject):
         # Connect widgets
         self._connect_plot_widgets()
         self._connect_scanning_control_widgets()
+        self._connect_thread_signals()
 
         # Error codes
         self._limit_error = False
@@ -235,6 +240,18 @@ class ScanningController(QObject):
         # Delta positioning
         self._delta_position_changed.connect(self.change_delta_position)
 
+    def _connect_thread_signals(self) -> None:
+        """Connects signals that marshal GUI updates from background threads to the main thread."""
+        self._plot_update_signal.connect(
+            lambda x, y: self.scanning_view.plot.update_plot(x=x, y=y, auto_scale=True)
+        )
+        self._plot_array_signal.connect(
+            lambda x_list, y_list: self.scanning_view.plot.update_plot_array(
+                x_list=x_list, y_list=y_list, auto_scale=True
+            )
+        )
+        self._status_signal.connect(self._update_status_label)
+
     def change_delta_position(self, start: float) -> None:
         self.scanning_view.plot.update_delta_position(start=start)
 
@@ -393,9 +410,7 @@ class ScanningController(QObject):
 
             data_array = caget(self.station.miscellaneous.mcs_channel.value[1])
 
-            self.scanning_view.plot.update_plot_array(
-                x_list=scan.lines[0].trj_positions, y_list=data_array, auto_scale=True
-            )
+            self._plot_array_signal.emit(list(scan.lines[0].trj_positions), list(data_array))
 
             caput(self.station.miscellaneous.mcs_stop.value[1], 1)
 
@@ -430,11 +445,7 @@ class ScanningController(QObject):
                 # Get fly data
                 data_array = caget(self.station.miscellaneous.mcs_channel.value[1])
 
-                self.scanning_view.plot.update_plot_array(
-                    x_list=scan.lines[0].trj_positions,
-                    y_list=data_array,
-                    auto_scale=True,
-                )
+                self._plot_array_signal.emit(list(scan.lines[0].trj_positions), list(data_array))
 
                 # Break sleep into smaller chunks to check abort status
                 elapsed = 0
@@ -1548,6 +1559,7 @@ class ScanningController(QObject):
         scan: MapModel,
         correction_scaler: Optional[List[str]] = None,
     ):
+        self.raw_data = []
         sleep_time = exposure_time + 0.1
 
         if scaler != self.station.scalers.s9.value[1]:
@@ -1597,7 +1609,7 @@ class ScanningController(QObject):
             counts = counts - correction_counts
 
         # Update the plot
-        self.scanning_view.plot.update_plot(x=positions[0], y=counts, auto_scale=True)
+        self._plot_update_signal.emit(positions[0], counts)
 
         for i in range(1, len(positions)):
 
@@ -1627,9 +1639,7 @@ class ScanningController(QObject):
                     counts = counts - correction_counts
 
                 # Update plot
-                self.scanning_view.plot.update_plot(
-                    x=positions[i], y=counts, auto_scale=True
-                )
+                self._plot_update_signal.emit(positions[i], counts)
 
         if correction_scaler is not None:
             raw_data = self.raw_data
@@ -1680,7 +1690,7 @@ class ScanningController(QObject):
             else:
                 color = "LightCoral"
 
-            self._update_status_label(label_text, color)
+            self._status_signal.emit(label_text, color)
 
         if self.station.trj_running:
             self.scan_running.emit(True)
