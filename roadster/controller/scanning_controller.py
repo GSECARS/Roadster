@@ -375,6 +375,7 @@ class ScanningController(QObject):
             # Get direction
             direction = -1 if caget(target_stage + ".DIR") == 1 else 1
             xps_direction = "backward" if direction == -1 else "foreward"
+            accel = caget(target_stage + ".ACCL")
                 
             # Define xps trajectory
             self.stage_xps.define_line_trajectories(
@@ -384,6 +385,7 @@ class ScanningController(QObject):
                 step=step,
                 pixeltime=None,
                 scantime=scantime,
+                accel=accel,
             )
 
             # Set count type to oneshot
